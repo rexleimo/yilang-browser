@@ -1,0 +1,28 @@
+name: yilan_browser
+description: "一览 Yilan —— 书签浏览器（P1 MVP）"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 浏览内核：iOS=WKWebView / Android=WebView（系统内核，跨端一致）
+  webview_flutter: ^4.8.0
+  # MVP 本地持久化（JSON），后续可换 drift/Hive
+  shared_preferences: ^2.3.0
+  # 系统分享面板与截图文件落盘
+  share_plus: ^10.1.4
+  path_provider: ^2.1.5
+  # 将下载链接交给系统下载器处理
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
