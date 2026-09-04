@@ -136,20 +136,26 @@ class _SettingsPageState extends State<SettingsPage> {
                   children: [
                     const Icon(Icons.search, size: 19, color: UIKit.sub),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        onChanged: (v) => setState(() => _query = v),
-                        style:
-                            const TextStyle(fontSize: 14.5, color: UIKit.ink),
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          border: InputBorder.none,
-                          hintText: '搜索设置',
-                          hintStyle:
-                              TextStyle(fontSize: 14.5, color: UIKit.sub),
-                        ),
-                      ),
-                    ),
+                     Expanded(
+                       child: TextField(
+                         onChanged: (v) => setState(() => _query = v),
+                         style:
+                             const TextStyle(fontSize: 14.5, color: UIKit.ink),
+                         // 全局输入主题带灰蓝填充和描边，会嵌在自绘胶囊里，
+                         // 这里全部关掉只留裸文本
+                         decoration: const InputDecoration(
+                           isDense: true,
+                           filled: false,
+                           border: InputBorder.none,
+                           enabledBorder: InputBorder.none,
+                           focusedBorder: InputBorder.none,
+                           contentPadding: EdgeInsets.zero,
+                           hintText: '搜索设置',
+                           hintStyle:
+                               TextStyle(fontSize: 14.5, color: UIKit.sub),
+                         ),
+                       ),
+                     ),
                     if (_query.isNotEmpty)
                       GestureDetector(
                         onTap: () => setState(() => _query = ''),

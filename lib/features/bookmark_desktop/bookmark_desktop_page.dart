@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/logic/board_model.dart';
+import '../../core/logic/search_engines.dart';
 import '../../core/metrics.dart';
 import '../../core/models/bookmark.dart';
 import '../../core/widgets/browser_chrome.dart';
@@ -116,7 +117,39 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
 
   final TextEditingController _addressController = TextEditingController();
   final FocusNode _addressFocus = FocusNode();
+  final GlobalKey _sourceButtonKey = GlobalKey();
   bool _showingSearch = false;
+
+  /// 首页搜索源模式（Firefox 式）：0-4 = 引擎序号，-1 = 书签，-2 = 历史。
+  /// 左侧 Logo 跟随该值变化；仅会话内有效，不写回设置。
+  int _searchSource = 1;
+
+  bool get _sourceIsEngine => _searchSource >= 0;
+
+  Widget get _sourceLogo {
+    switch (_searchSource) {
+      case -1:
+        return const Icon(Icons.star_border, size: 18, color: AppColors.ink);
+      case -2:
+        return const Icon(Icons.schedule, size: 18, color: AppColors.ink);
+      default:
+        return EngineLogo(
+            index: SearchEngines.clamp(_searchSource), size: 18);
+    }
+  }
+
+  /// 来源菜单（引擎 / 书签 / 标签页 / 历史 / 搜索设置）。
+  void _showSourceMenu() {
+    showSearchSourceMenu(
+      context,
+      anchorKey: _sourceButtonKey,
+      onEngine: (i) => setState(() => _searchSource = i),
+      onBookmarks: () => setState(() => _searchSource = -1),
+      onTabs: () => widget.onOpenTabs?.call(),
+      onHistory: () => setState(() => _searchSource = -2),
+      onSettings: () => widget.onOpenSettings?.call(),
+    );
+  }
 
   @override
   void initState() {
@@ -832,14 +865,19 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
                               key: const ValueKey('home-omnibox'),
                               controller: _addressController,
                               focusNode: _addressFocus,
-                              hintText: '搜索或输入网址',
+                              hintText: _sourceIsEngine
+                                  ? '用 ${SearchEngines.name(_searchSource)} 搜索或输入网址'
+                                  : _searchSource == -1
+                                      ? '搜索书签'
+                                      : '打开历史记录',
                               displayText: '',
                               editing: _showingSearch,
                               onActivate: _openSearch,
                               onSubmit: _submitAddress,
+                              onEngineTap: _showSourceMenu,
+                              engineButtonKey: _sourceButtonKey,
+                              leadingSource: _sourceLogo,
                               onClose: _closeSearch,
-                              engineIndex:
-                                  m.settings.searchEngineIndex.clamp(0, 3),
                             ),
                             Expanded(
                               child: ColoredBox(
@@ -1484,7 +1522,49 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _addressFocus.unfocus();
     setState(() => _showingSearch = false);
     if (value.isEmpty) return;
-    widget.onSubmitAddress(value);
+    switch (_searchSource) {
+      case -1:
+        // 书签模式：搜本机书签，命中就打开第一个
+        final q = value.toLowerCase();
+        final hits = <BookmarkItem>[];
+        void walk(List<BookmarkEntity> list) {
+          for (final e in list) {
+            final item = e.asItem;
+            if (item != null) {
+              if (item.name.toLowerCase().contains(q) ||
+                  item.url.toLowerCase().contains(q)) {
+                hits.add(item);
+              }
+            } else {
+              walk(e.asFolder?.children ?? const []);
+            }
+          }
+        }
+
+        for (final page in m.pages) {
+          walk(page);
+        }
+        if (hits.isNotEmpty) {
+          widget.onOpenUrl(hits.first.url);
+          if (hits.length > 1) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text('已打开第一个匹配，共 ${hits.length} 个书签命中')));
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('没有匹配的书签，试试换个来源')));
+        }
+      case -2:
+        // 历史模式：进浏览器历史页
+        widget.onOpenHistory?.call();
+      default:
+        // 看起来是网址就直达，否则用当前选中的引擎搜
+        final looksLikeUrl = value.contains('://') ||
+            value.contains('.') ||
+            value.startsWith('localhost');
+        widget.onSubmitAddress(
+            looksLikeUrl ? value : SearchEngines.searchUrl(_searchSource, value));
+    }
     _addressController.clear();
   }
 }

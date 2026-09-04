@@ -924,15 +924,33 @@ class BrowserPageState extends State<BrowserPage> {
     return out;
   }
 
-  /// 地址栏下拉建议：近期搜索 / 书签 / 历史 / 标签页 + 本次搜索引擎快切。
+  /// 当前生效的默认引擎序号（无痕标签页用无痕引擎）。
+  int get _defaultEngineIndex {
+    final s = widget.model.settings;
+    return SearchEngines.clamp(
+        _currentTab.private ? s.privateSearchEngineIndex : s.searchEngineIndex);
+  }
+
+  /// "此次搜索"来源菜单（Firefox 式）：锚在地址栏 Logo 下方。
+  final GlobalKey _engineButtonKey = GlobalKey();
+
+  void _showEnginePicker() {
+    showSearchSourceMenu(
+      context,
+      anchorKey: _engineButtonKey,
+      onEngine: (i) => _searchWith(i, _address.text),
+      onBookmarks: () => widget.onOpenBookmarks?.call(),
+      onTabs: () => showTabs(),
+      onHistory: () => showHistory(),
+      onSettings: () => widget.onOpenSettings?.call(),
+    );
+  }
+
+  /// 地址栏下拉建议：近期搜索 / 书签 / 历史 / 标签页。
   Widget _buildAddressSuggestions() {
     final s = widget.model.settings;
     final q = _address.text.trim().toLowerCase();
     final scheme = Theme.of(context).colorScheme;
-    final defaultEngine =
-        SearchEngines.clamp(_currentTab.private || s.incognito
-            ? s.privateSearchEngineIndex
-            : s.searchEngineIndex);
 
     final rows = <Widget>[];
 
@@ -979,46 +997,6 @@ class BrowserPageState extends State<BrowserPage> {
           ),
         ),
       );
-    }
-
-    if (q.isNotEmpty) {
-      rows.add(row(
-        leading: EngineLogo(index: defaultEngine, size: 18),
-        title: '搜索「${_address.text.trim()}」',
-        subtitle: '用 ${SearchEngines.name(defaultEngine)} 搜索',
-        onTap: () => _searchWith(defaultEngine, _address.text),
-      ));
-      // 本次搜索的引擎快切
-      rows.add(SizedBox(
-        height: 52,
-        child: Row(
-          children: [
-            const SizedBox(width: 14),
-            Text('本次搜索：',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: scheme.onSurfaceVariant.withValues(alpha: .8))),
-            Expanded(
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                children: [
-                  for (var i = 0; i < SearchEngines.names.length; i++)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      child: ActionChip(
-                        label: Text(SearchEngines.name(i),
-                            style: const TextStyle(fontSize: 12)),
-                        avatar: EngineLogo(index: i, size: 16),
-                        onPressed: () => _searchWith(i, _address.text),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ));
     }
 
     final recent = _recentSearches
@@ -1096,7 +1074,16 @@ class BrowserPageState extends State<BrowserPage> {
       }
     }
 
-    if (rows.isEmpty) return const SizedBox.shrink();
+    if (rows.isEmpty) {
+      if (q.isEmpty) return const SizedBox.shrink();
+      // 没命中任何来源 → 给一条默认搜索兜底；换引擎走地址栏左侧菜单
+      rows.add(row(
+        leading: EngineLogo(index: _defaultEngineIndex, size: 18),
+        title: '搜索「${_address.text.trim()}」',
+        subtitle: '用 ${SearchEngines.name(_defaultEngineIndex)} 搜索',
+        onTap: () => _searchWith(_defaultEngineIndex, _address.text),
+      ));
+    }
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
@@ -2030,11 +2017,12 @@ class BrowserPageState extends State<BrowserPage> {
       onActivate: _openAddressEditor,
       onSubmit: _go,
       onChanged: (_) => setState(() {}),
+      onEngineTap: _showEnginePicker,
+      engineButtonKey: _engineButtonKey,
+      engineIndex: _defaultEngineIndex,
       onClose: _closeAddressEditor,
       private: tab.private,
       onReload: tab.controller == null ? null : _reload,
-      engineIndex:
-          widget.model.settings.searchEngineIndex.clamp(0, 3),
     );
   }
 

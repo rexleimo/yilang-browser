@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../logic/search_engines.dart';
 import '../../theme/app_theme.dart';
 import 'ui_kit.dart';
 
@@ -286,6 +287,107 @@ class BrowserToolbarFrame extends StatelessWidget {
 }
 
 /// 搜索引擎品牌标（地址栏左侧显示当前引擎）。
+/// 「此次搜索」来源菜单（Firefox 式）：锚在地址栏 Logo 下方的下拉，
+/// 纵向引擎列表 + 书签/标签页/历史/搜索设置快捷入口。
+/// [anchorKey] 指向地址栏左侧的引擎按钮；回调由调用方（浏览器/书签页）注入。
+Future<void> showSearchSourceMenu(
+  BuildContext context, {
+  required GlobalKey anchorKey,
+  required void Function(int engineIndex) onEngine,
+  required VoidCallback onBookmarks,
+  required VoidCallback onTabs,
+  required VoidCallback onHistory,
+  required VoidCallback onSettings,
+}) {
+  final box = anchorKey.currentContext?.findRenderObject() as RenderBox?;
+  final overlayBox =
+      Overlay.of(context).context.findRenderObject() as RenderBox?;
+  RelativeRect? position;
+  if (box != null && overlayBox != null && box.attached && overlayBox.attached) {
+    final topLeft = box.localToGlobal(Offset.zero, ancestor: overlayBox);
+    position = RelativeRect.fromLTRB(
+      topLeft.dx,
+      topLeft.dy + box.size.height + 6,
+      (overlayBox.size.width - topLeft.dx - box.size.width).clamp(0, 9999),
+      0,
+    );
+  }
+
+  return showMenu<int>(
+    context: context,
+    position: position,
+    color: Theme.of(context).colorScheme.surface,
+    surfaceTintColor: Colors.transparent,
+    elevation: 8,
+    shadowColor: Colors.black26,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    constraints: const BoxConstraints(minWidth: 240, maxWidth: 320),
+    items: [
+      PopupMenuItem<int>(
+        enabled: false,
+        height: 34,
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+        child: Text('此次搜索：',
+            style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      ),
+      for (var i = 0; i < SearchEngines.names.length; i++)
+        PopupMenuItem<int>(
+          value: i,
+          height: 48,
+          child: Row(
+            children: [
+              EngineLogo(index: i, size: 24),
+              const SizedBox(width: 14),
+              Text(SearchEngines.name(i),
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      const PopupMenuDivider(),
+      _sourceItem(5, Icons.star_border, '书签'),
+      _sourceItem(6, Icons.tab_outlined, '标签页'),
+      _sourceItem(7, Icons.schedule, '历史'),
+      const PopupMenuDivider(),
+      _sourceItem(8, Icons.settings_outlined, '搜索设置'),
+    ],
+  ).then<void>((value) {
+    if (value == null) return;
+    if (value >= 0 && value <= 4) {
+      onEngine(value);
+      return;
+    }
+    switch (value) {
+      case 5:
+        onBookmarks();
+      case 6:
+        onTabs();
+      case 7:
+        onHistory();
+      case 8:
+        onSettings();
+    }
+  });
+}
+
+PopupMenuItem<int> _sourceItem(int value, IconData icon, String label) {
+  return PopupMenuItem<int>(
+    value: value,
+    height: 48,
+    child: Row(
+      children: [
+        Icon(icon, size: 22),
+        const SizedBox(width: 14),
+        Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+      ],
+    ),
+  );
+}
+
+/// 搜索引擎品牌标（地址栏左侧显示当前引擎）。
 class EngineLogo extends StatelessWidget {
   const EngineLogo({super.key, required this.index, this.size = 18});
 
@@ -429,6 +531,9 @@ class BrowserOmnibox extends StatelessWidget {
     required this.onSubmit,
     required this.onClose,
     this.onChanged,
+    this.onEngineTap,
+    this.engineButtonKey,
+    this.leadingSource,
     this.private = false,
     this.onReload,
     this.engineIndex = 0,
@@ -442,6 +547,15 @@ class BrowserOmnibox extends StatelessWidget {
   final VoidCallback onActivate;
   final ValueChanged<String> onSubmit;
   final ValueChanged<String>? onChanged;
+
+  /// 编辑态点左侧引擎 Logo → 弹出"此次搜索"来源菜单（Firefox 式）。
+  final VoidCallback? onEngineTap;
+
+  /// 引擎按钮锚点（下拉菜单贴着它定位）。
+  final GlobalKey? engineButtonKey;
+
+  /// 覆盖左侧 Logo 的自定义源（书签★ / 历史⏱ 等模式）。
+  final Widget? leadingSource;
   final VoidCallback onClose;
   final bool private;
   final VoidCallback? onReload;
@@ -468,7 +582,29 @@ class BrowserOmnibox extends StatelessWidget {
             child: Row(
               children: [
                 const SizedBox(width: 12),
-                if (private || hasLocation)
+                if (editing && onEngineTap != null)
+                  // Firefox 式：源 Logo + 下拉箭头 → "此次搜索"菜单
+                  InkWell(
+                    key: engineButtonKey,
+                    onTap: onEngineTap,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding:
+                          const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          leadingSource ?? EngineLogo(index: engineIndex, size: 18),
+                          Icon(
+                            Icons.keyboard_arrow_down,
+                            size: 16,
+                            color: foreground.withValues(alpha: .6),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else if (private || hasLocation)
                   Icon(
                     private
                         ? Icons.visibility_off_outlined
@@ -477,7 +613,7 @@ class BrowserOmnibox extends StatelessWidget {
                     size: 18,
                   )
                 else
-                  EngineLogo(index: engineIndex, size: 18),
+                  leadingSource ?? EngineLogo(index: engineIndex, size: 18),
                 const SizedBox(width: 9),
                 Expanded(
                   child: editing
