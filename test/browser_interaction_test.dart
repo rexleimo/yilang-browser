@@ -46,23 +46,23 @@ Future<void> _openBrowserMenu(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// 面板已改为网格菜单：所有条目直接平铺（越界条目先滚动到可见）。
+/// 面板为 4×2 分页网格：条目不在首页时横向翻页查找。
+Future<void> _swipeToMenuEntry(WidgetTester tester, String label) async {
+  for (var i = 0; i < 6 && find.text(label).evaluate().isEmpty; i++) {
+    await tester.drag(find.byType(PageView), const Offset(-400, 0));
+    await tester.pumpAndSettle();
+  }
+  expect(find.text(label), findsOneWidget, reason: label);
+}
+
+/// 面板条目点击：需要时先翻页到目标。
 Future<void> _tapMenuEntry(WidgetTester tester, String label) async {
   await _openBrowserMenu(tester);
-  final f = find.text(label);
-  if (f.evaluate().isEmpty) {
-    await tester.scrollUntilVisible(
-      f,
-      150,
-      scrollable: find.descendant(
-        of: find.byType(GridView),
-        matching: find.byType(Scrollable),
-      ),
-    );
+  if (find.text(label).evaluate().isEmpty) {
+    await _swipeToMenuEntry(tester, label);
+    await tester.pumpAndSettle();
   }
-  await tester.ensureVisible(f);
-  await tester.pumpAndSettle();
-  await tester.tap(f);
+  await tester.tap(find.text(label));
   await tester.pumpAndSettle();
 }
 
@@ -184,25 +184,9 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
-      // 网格惰性构建：滚动后再断言后方条目
-      await tester.scrollUntilVisible(
-        find.text('历史记录'),
-        150,
-        scrollable: find.descendant(
-          of: find.byType(GridView),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      expect(find.text('历史记录'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('浏览器设置'),
-        150,
-        scrollable: find.descendant(
-          of: find.byType(GridView),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      expect(find.text('浏览器设置'), findsOneWidget);
+      // 网格分页：翻页后再断言后方条目
+      await _swipeToMenuEntry(tester, '历史记录');
+      await _swipeToMenuEntry(tester, '浏览器设置');
     });
 
     testWidgets('history and reading list open as full pages with search',
@@ -294,9 +278,9 @@ void main() {
 
       await tester.tap(find.byTooltip('面板'));
       await tester.pumpAndSettle();
-      // 网格菜单：条目平铺，无二级分类
+      // 网格菜单：条目平铺，无二级分类；超出一页的条目翻页可见
       expect(find.text('在页面中查找'), findsOneWidget);
-      expect(find.text('浏览器设置'), findsOneWidget);
+      await _swipeToMenuEntry(tester, '浏览器设置');
     });
 
     testWidgets('incognito entry opens a private tab without a WebView',

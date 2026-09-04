@@ -28,6 +28,8 @@ class BookmarkDesktopPage extends StatefulWidget {
     this.onOpenTabs,
     this.onOpenReadingList,
     this.onOpenHistory,
+    this.onOpenDownloads,
+    this.onNewIncognitoTab,
     this.tabSummaries = const [],
     this.onSelectBrowserTab,
   });
@@ -41,6 +43,8 @@ class BookmarkDesktopPage extends StatefulWidget {
   final VoidCallback? onOpenTabs;
   final VoidCallback? onOpenReadingList;
   final VoidCallback? onOpenHistory;
+  final VoidCallback? onOpenDownloads;
+  final VoidCallback? onNewIncognitoTab;
 
   /// Live browser tabs so Home's strip shows them alongside the 一览 chip.
   final List<BrowserTabSummary> tabSummaries;
@@ -1043,12 +1047,43 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
           }),
         ],
       ),
+      if (widget.onOpenDownloads != null)
+        BrowserMenuCategory(
+          icon: Icons.download_outlined,
+          title: '下载中心',
+          subtitle: '查看下载任务',
+          actions: [
+            menuTile(context, icon: Icons.download_outlined, title: '查看下载任务',
+                onTap: () {
+              Navigator.pop(context);
+              widget.onOpenDownloads!();
+            }),
+          ],
+        ),
+      BrowserMenuCategory(
+        icon: Icons.tab_outlined,
+        title: '标签页',
+        subtitle: '无痕浏览、整理标签页',
+        actions: [
+          if (widget.onNewIncognitoTab != null)
+            menuTile(context, icon: Icons.visibility_off_outlined,
+                title: '新建无痕标签页', onTap: () {
+              Navigator.pop(context);
+              widget.onNewIncognitoTab!();
+            }),
+          if (widget.onOpenTabs != null)
+            menuTile(context, icon: Icons.tab_outlined, title: '查看标签页', onTap: () {
+              Navigator.pop(context);
+              widget.onOpenTabs!();
+            }),
+        ],
+      ),
       BrowserMenuCategory(
         icon: Icons.settings_outlined,
         title: '设置',
         subtitle: '搜索引擎、无痕浏览、外观',
         actions: [
-          menuTile(context, icon: Icons.settings_outlined, title: '打开设置',
+          menuTile(context, icon: Icons.settings_outlined, title: '浏览器设置',
               onTap: () {
             Navigator.pop(context);
             (widget.onOpenSettings ?? _openSettingsSheet).call();

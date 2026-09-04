@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
@@ -558,8 +560,10 @@ class BrowserMenuCategory {
 }
 
 /// Consistent bottom menu sheet: a Brave-style icon grid — all actions
-/// flattened into 4-column cells (icon + label). Tapping an entry either
-/// performs the action or pushes a full settings page.
+/// flattened into 4-column cells (icon + label). Height adapts to content,
+/// capped at 2 rows; extra entries flow into horizontal swipe pages with a
+/// dot indicator (iOS-style). Tapping an entry either performs the action
+/// or pushes a full settings page.
 Future<void> showBrowserMenuSheet(
   BuildContext context, {
   required List<BrowserMenuCategory> categories,
@@ -571,66 +575,145 @@ Future<void> showBrowserMenuSheet(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     constraints: BoxConstraints(
-      maxHeight: MediaQuery.sizeOf(context).height * .56,
+      maxHeight: MediaQuery.sizeOf(context).height * .8,
     ),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
-    builder: (ctx) {
-      final scrollController = ScrollController();
-      final actions = [for (final c in categories) ...c.actions];
-      return SafeArea(
-        child: Material(
-          color: Theme.of(ctx).colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 10, bottom: 2),
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Theme.of(ctx)
-                      .colorScheme
-                      .onSurfaceVariant
-                      .withValues(alpha: .35),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Expanded(
-                child: GridView.builder(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    childAspectRatio: .92,
+    builder: (ctx) => _BrowserMenuSheet(categories: categories, title: title),
+  );
+}
+
+class _BrowserMenuSheet extends StatefulWidget {
+  const _BrowserMenuSheet({required this.categories, required this.title});
+
+  final List<BrowserMenuCategory> categories;
+  final String title;
+
+  @override
+  State<_BrowserMenuSheet> createState() => _BrowserMenuSheetState();
+}
+
+class _BrowserMenuSheetState extends State<_BrowserMenuSheet> {
+  static const int _cols = 4;
+  static const int _maxRows = 2;
+  static const int _perPage = _cols * _maxRows;
+
+  final PageController _pageController = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actions = [for (final c in widget.categories) ...c.actions];
+    final pages = <List<Widget>>[
+      for (var i = 0; i < actions.length; i += _perPage)
+        actions.sublist(i, math.min(i + _perPage, actions.length)),
+    ];
+    // Height must fit the fullest page (earlier pages), not just the last one.
+    final rows = math.min((actions.length / _cols).ceil(), _maxRows);
+
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Material(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(24)),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 2),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant
+                        .withValues(alpha: .35),
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  itemCount: actions.length,
-                  itemBuilder: (ctx, i) => actions[i],
                 ),
-              ),
-              // 收起（Brave 菜单底部习惯）
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: IconButton(
-                  tooltip: '收起面板',
-                  onPressed: () => Navigator.pop(ctx),
-                  icon: Icon(Icons.keyboard_arrow_down,
-                      size: 26,
-                      color: Theme.of(ctx)
-                          .colorScheme
-                          .onSurfaceVariant
-                          .withValues(alpha: .7)),
+                LayoutBuilder(builder: (ctx, cons) {
+                  final cellW = (cons.maxWidth - 28) / _cols;
+                  final rowH = cellW / .92;
+                  return SizedBox(
+                    height: rows * rowH,
+                    child: PageView(
+                      controller: _pageController,
+                      onPageChanged: (i) => setState(() => _page = i),
+                      children: [
+                        for (final pageActions in pages)
+                          GridView.count(
+                            padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+                            crossAxisCount: _cols,
+                            childAspectRatio: .92,
+                            physics: const NeverScrollableScrollPhysics(),
+                            children: pageActions,
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+                if (pages.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, bottom: 2),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        for (var i = 0; i < pages.length; i++)
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            margin: const EdgeInsets.symmetric(horizontal: 4),
+                            width: i == _page ? 18 : 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: i == _page
+                                  ? AppColors.brand
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withValues(alpha: .3),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                      ],
+                    ),
+                  )
+                else
+                  const SizedBox(height: 8),
+                // 收起（底部常驻退出按钮）
+                SizedBox(
+                  height: 34,
+                  child: IconButton(
+                    tooltip: '收起面板',
+                    onPressed: () => Navigator.pop(context),
+                    padding: EdgeInsets.zero,
+                    icon: Icon(Icons.keyboard_arrow_down,
+                        size: 26,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant
+                            .withValues(alpha: .7)),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+              ],
+            ),
           ),
         ),
-      );
-    },
-  );
+      ),
+    );
+  }
 }
 
 /// 一个网格菜单项（Brave 风格：图标 + 标签，居中）。

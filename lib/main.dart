@@ -71,14 +71,25 @@ class _HomeShellState extends State<HomeShell> {
   final String? _pendingUrl = _demoUrl.isEmpty ? null : _demoUrl;
   final GlobalKey<BrowserPageState> _browserKey = GlobalKey<BrowserPageState>();
 
-  /// Home's tab strip chip for a live browser tab: switch into the browser
-  /// with that tab selected, like tapping a start-page tab in iOS Safari.
+  /// BrowserPage 在 IndexedStack 里随首帧一起构建，state 通常已就绪——
+  /// 同步交接 URL，保证切到浏览器的那一帧就已经带着地址，
+  /// 不会先闪一帧"新标签页"引导卡。state 未就绪时退回 postFrame。
+  void _withBrowser(void Function(BrowserPageState browser) fn) {
+    final browser = _browserKey.currentState;
+    if (browser != null) {
+      fn(browser);
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final browser = _browserKey.currentState;
+        if (browser != null) fn(browser);
+      });
+    }
+  }
+
   void _openBrowserTab(int index) {
     widget.model.exitEdit();
     setState(() => _tab = 1);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.selectExternalTab(index);
-    });
+    _withBrowser((browser) => browser.selectExternalTab(index));
   }
 
   void _openUrlInBrowser(String raw) {
@@ -86,9 +97,7 @@ class _HomeShellState extends State<HomeShell> {
     setState(() {
       _tab = 1;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.openAddress(raw);
-    });
+    _withBrowser((browser) => browser.openAddress(raw));
   }
 
   /// Home tiles open a fresh tab instead of clobbering the live page; the
@@ -96,44 +105,49 @@ class _HomeShellState extends State<HomeShell> {
   void _openUrlInNewTab(String raw) {
     widget.model.exitEdit();
     setState(() => _tab = 1);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.openInNewTab(raw,
-          private: widget.model.settings.incognito);
-    });
+    _withBrowser((browser) =>
+        browser.openInNewTab(raw, private: widget.model.settings.incognito));
   }
 
   void _openNewBrowserTab() {
     widget.model.exitEdit();
     setState(() => _tab = 1);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.openNewTab(
-        private: widget.model.settings.incognito,
-      );
-    });
+    _withBrowser((browser) =>
+        browser.openNewTab(private: widget.model.settings.incognito));
   }
 
   /// Home's tab button must enter the live tab overview, never create a tab.
   void _showBrowserTabs() {
     widget.model.exitEdit();
     setState(() => _tab = 1);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.showTabs(fromHome: true);
-    });
+    _withBrowser((browser) => browser.showTabs(fromHome: true));
   }
 
   void _showReadingList() {
     widget.model.exitEdit();
     setState(() => _tab = 1);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.showReadingList(fromHome: true);
-    });
+    _withBrowser((browser) => browser.showReadingList(fromHome: true));
   }
 
   void _showHistory() {
     widget.model.exitEdit();
     setState(() => _tab = 1);
+    _withBrowser((browser) => browser.showHistory(fromHome: true));
+  }
+
+  void _showDownloads() {
+    final downloads = widget.downloads;
+    if (downloads == null) return;
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => DownloadCenterPage(controller: downloads),
+    ));
+  }
+
+  void _openIncognitoTab() {
+    widget.model.exitEdit();
+    setState(() => _tab = 1);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _browserKey.currentState?.showHistory(fromHome: true);
+      _browserKey.currentState?.openNewTab(private: true);
     });
   }
 
@@ -186,6 +200,8 @@ class _HomeShellState extends State<HomeShell> {
             onOpenTabs: _showBrowserTabs,
             onOpenReadingList: _showReadingList,
             onOpenHistory: _showHistory,
+            onOpenDownloads: _showDownloads,
+            onNewIncognitoTab: _openIncognitoTab,
             tabSummaries: _tabSummaries,
             onSelectBrowserTab: _openBrowserTab,
           ),

@@ -63,6 +63,12 @@ class _BrowserTab {
   bool canGoBack = false;
   bool canGoForward = false;
   String? error;
+
+  /// URL of the failed main-frame load. Chromium finishes loading its built-in
+  /// error page right after onWebResourceError, so onPageFinished must not
+  /// clear [error] while it still matches this URL — otherwise our error card
+  /// disappears and the raw English "Web page not available" page shows.
+  String? errorUrl;
   String? previewImageUrl; // og:image / apple-touch-icon，封面兜底
   String? faviconUrl; // 站点小图标，显示在标签标题旁（浏览器 tab 习惯）
   WebViewController? controller;
@@ -217,6 +223,10 @@ class BrowserPageState extends State<BrowserPage> {
     if (!mounted) return;
     final url = _normalize(raw.trim());
     if (url.isEmpty) return;
+    if (!_isWebScheme(Uri.tryParse(url)?.scheme)) {
+      _launchExternally(url);
+      return;
+    }
     _showingTabs = false;
     _showingAddressEditor = false;
     final emptyIndex =
@@ -348,6 +358,7 @@ class BrowserPageState extends State<BrowserPage> {
           if (!isLocalCopy) tab.url = value;
           tab.loading = true;
           tab.error = null;
+          tab.errorUrl = null;
           // 占位标签页从此转正 → 同步给 Home 的标签条
           _notifyTabCount();
           if (_currentTab == tab) {
@@ -362,7 +373,12 @@ class BrowserPageState extends State<BrowserPage> {
           final isLocalCopy = value.startsWith('file://');
           if (!isLocalCopy) tab.url = value;
           tab.loading = false;
-          tab.error = null;
+          // Chromium 的内置错误页也是在"加载完成"回调里结束的：错误若属于
+          // 本 URL，保留 error 卡，别把我们的错误提示擦掉露出英文错误页。
+          if (tab.errorUrl == null || tab.errorUrl != value) {
+            tab.error = null;
+            tab.errorUrl = null;
+          }
           if (_currentTab == tab && !_addressFocus.hasFocus && !isLocalCopy) {
             _address.text = value;
           }
@@ -479,6 +495,19 @@ class BrowserPageState extends State<BrowserPage> {
           if (_currentTab == tab) setState(() {});
         },
         onNavigationRequest: (request) async {
+          // 页面里点到的 App 深链交给系统；file:// 是离线副本要放行。
+          final scheme =
+              Uri.tryParse(request.url)?.scheme.toLowerCase() ?? '';
+          const localSchemes = {'http', 'https', 'file', 'about', 'data'};
+          if (scheme.isNotEmpty && !localSchemes.contains(scheme)) {
+            final uri = Uri.tryParse(request.url);
+            if (uri != null) {
+              try {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              } catch (_) {}
+            }
+            return NavigationDecision.prevent;
+          }
           if (_looksLikeDownload(request.url)) {
             widget.downloads?.enqueue(request.url);
             if (defaultTargetPlatform == TargetPlatform.android) {
@@ -522,6 +551,7 @@ class BrowserPageState extends State<BrowserPage> {
           }
           tab.loading = false;
           tab.error = error.description;
+          tab.errorUrl = error.url ?? tab.url;
           if (_currentTab == tab) setState(() {});
         },
       ));
@@ -685,6 +715,7 @@ class BrowserPageState extends State<BrowserPage> {
       tab.title = '新标签页';
       tab.loading = false;
       tab.error = null;
+      tab.errorUrl = null;
       _address.clear();
       setState(() => _showingTabs = false);
       backToHome = true; // 只剩占位页 → 直接回「一览」
@@ -760,12 +791,46 @@ class BrowserPageState extends State<BrowserPage> {
     _showCollection(history: true, fromHome: fromHome);
   }
 
+  /// 非 http(s) 链接（App 深链、mailto、tel 等）不进 WebView，交给系统。
+  Future<void> _launchExternally(String url) async {
+    final uri = Uri.tryParse(url);
+    var ok = false;
+    if (uri != null) {
+      try {
+        ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        ok = false;
+      }
+    }
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('该链接需要在安装对应 App 后才能打开')));
+    }
+    // 深链没有网页内容：空白占位标签页直接回「一览」主页。
+    if (_isBlank(_currentTab)) {
+      widget.onOpenBookmarks?.call();
+    } else {
+      setState(() {});
+    }
+  }
+
+  static bool _isWebScheme(String? scheme) {
+    final s = scheme?.toLowerCase() ?? '';
+    return s.isEmpty || s == 'http' || s == 'https';
+  }
+
   void _go(String raw) {
     final url = _normalize(raw);
+    if (!_isWebScheme(Uri.tryParse(url)?.scheme)) {
+      _launchExternally(url);
+      return;
+    }
     final tab = _currentTab;
     tab.url = url;
     tab.title = _BrowserTab._host(url);
     tab.error = null;
+    tab.errorUrl = null;
     tab.loading = true;
     tab.canGoForward = false;
     _address.text = url;
@@ -1206,8 +1271,33 @@ class BrowserPageState extends State<BrowserPage> {
     ]);
   }
 
+  /// Chromium 的 net::ERR_* 描述转成人话；没匹配上就原样展示。
+  static String _friendlyLoadError(String raw) {
+    const map = <String, String>{
+      'ERR_INTERNET_DISCONNECTED': '网络未连接，请检查网络后重试',
+      'ERR_CONNECTION_TIMED_OUT': '连接超时，站点可能暂时不可用',
+      'ERR_TIMED_OUT': '连接超时，站点可能暂时不可用',
+      'ERR_CONNECTION_REFUSED': '站点拒绝了连接',
+      'ERR_NAME_NOT_RESOLVED': '找不到该网站，检查网址是否正确',
+      'ERR_ADDRESS_UNREACHABLE': '无法访问该地址',
+      'ERR_BLOCKED_BY_ADMINISTRATOR': '该地址已被阻止访问',
+      'ERR_ACCESS_DENIED': '访问被拒绝',
+      'ERR_CACHE_MISS': '页面缓存已失效，请重新加载',
+      'ERR_ABORTED': '加载被中断，请重新打开',
+    };
+    for (final entry in map.entries) {
+      if (raw.contains(entry.key)) return entry.value;
+    }
+    return raw;
+  }
+
   Widget _tabContent(_BrowserTab tab) {
     if (tab.controller == null) {
+      // URL 已定但 WebView 还没挂上（首帧主题依赖导致延后挂载）：
+      // 显示加载占位，避免闪现"新标签页"引导卡。
+      if (tab.url.isNotEmpty || tab.loading) {
+        return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
+      }
       return _NewTabView(
         private: tab.private,
         onFocusAddress: _openAddressEditor,
@@ -1216,7 +1306,12 @@ class BrowserPageState extends State<BrowserPage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        WebViewWidget(controller: tab.controller!),
+        if (tab.error != null)
+          // 出错时盖住 WebView：Chromium 会渲染自己的英文错误页，
+          // 留着它就会从我们错误卡底下露出来。
+          ColoredBox(color: Theme.of(context).colorScheme.surface)
+        else
+          WebViewWidget(controller: tab.controller!),
         if (tab.loading)
           const Align(
             alignment: Alignment.topCenter,
@@ -1254,7 +1349,7 @@ class BrowserPageState extends State<BrowserPage> {
                           style: TextStyle(
                               fontSize: 18, fontWeight: FontWeight.w800)),
                       const SizedBox(height: 8),
-                      Text(tab.error!,
+                      Text(_friendlyLoadError(tab.error!),
                           textAlign: TextAlign.center,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
@@ -1464,30 +1559,18 @@ class BrowserPageState extends State<BrowserPage> {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  // 计数：与旁边图标同视觉重量（无边框方块）
                                   SizedBox(
                                     width: 48,
                                     height: 48,
                                     child: Center(
-                                      child: Container(
-                                        width: 26,
-                                        height: 26,
-                                        decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          border: Border.all(
-                                            color: scheme.onSurfaceVariant,
-                                            width: 1.8,
-                                          ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          '$_realTabCount',
-                                          style: TextStyle(
-                                            color: scheme.onSurfaceVariant,
-                                            fontSize: 12.5,
-                                            height: 1,
-                                            fontWeight: FontWeight.w700,
-                                          ),
+                                      child: Text(
+                                        '$_realTabCount',
+                                        style: TextStyle(
+                                          color: scheme.onSurfaceVariant,
+                                          fontSize: 17,
+                                          height: 1,
+                                          fontWeight: FontWeight.w800,
                                         ),
                                       ),
                                     ),
@@ -1532,8 +1615,8 @@ class BrowserPageState extends State<BrowserPage> {
                                         Icons.delete_sweep_outlined,
                                         size: 22,
                                         color: _tabs.length < 2
-                                            ? scheme.onSurface
-                                                .withValues(alpha: .28)
+                                            ? scheme.onSurfaceVariant
+                                                .withValues(alpha: .35)
                                             : scheme.onSurfaceVariant,
                                       ),
                                     ),
