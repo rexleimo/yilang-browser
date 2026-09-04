@@ -1,7 +1,10 @@
 ﻿import 'package:flutter/material.dart';
 
 import '../../core/logic/board_model.dart';
+import '../../core/logic/search_engines.dart';
+import '../../core/widgets/browser_chrome.dart';
 import '../../core/widgets/ui_kit.dart';
+import '../../theme/app_theme.dart';
 
 /// Application settings — 系统式分层设置：分组卡片 + 子页推进（← 返回 / X 关闭），
 /// 顶部支持搜索过滤。行为对齐 Brave 设置页的操作习惯。
@@ -18,37 +21,12 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   String _query = '';
 
-  static const _engineIcons = [
-    Icons.travel_explore_outlined, // Google
-    Icons.search, // 百度
-    Icons.explore_outlined, // 必应
-    Icons.shield_outlined, // DuckDuckGo
-  ];
-
   void _push(BuildContext context, Widget page) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
-  void _pickEngine(BuildContext context) async {
-    final model = widget.model;
-    final selected = await showUiSheet<int>(
-      context: context,
-      title: '选择搜索引擎',
-      children: [
-        for (var i = 0; i < Settings.engines.length; i++)
-          UiOptionTile(
-            icon: _engineIcons[i.clamp(0, _engineIcons.length - 1)],
-            title: Settings.engines[i],
-            subtitle: i == model.settings.searchEngineIndex ? '当前使用' : null,
-            selected: i == model.settings.searchEngineIndex,
-            onTap: () => Navigator.pop(context, i),
-          ),
-      ],
-    );
-    if (selected != null) {
-      widget.model.settings.searchEngineIndex = selected;
-      await widget.model.save();
-    }
+  void _openSearchSettings(BuildContext context) {
+    _push(context, _SearchSubPage(widget.model));
   }
 
   @override
@@ -58,8 +36,6 @@ class _SettingsPageState extends State<SettingsPage> {
       listenable: model,
       builder: (context, _) {
         final s = model.settings;
-        final engine = Settings
-            .engines[s.searchEngineIndex.clamp(0, Settings.engines.length - 1)];
         final q = _query.trim().toLowerCase();
         bool hit(String title) => q.isEmpty || title.toLowerCase().contains(q);
 
@@ -68,8 +44,8 @@ class _SettingsPageState extends State<SettingsPage> {
             UiTile(
               icon: Icons.search,
               title: '搜索引擎',
-              value: engine,
-              onTap: () => _pickEngine(context),
+              value: SearchEngines.name(s.searchEngineIndex),
+              onTap: () => _openSearchSettings(context),
             ),
           if (hit('外观'))
             UiTile(
@@ -96,8 +72,8 @@ class _SettingsPageState extends State<SettingsPage> {
           if (hit('广告拦截'))
             UiTile(
               icon: Icons.block_outlined,
-              title: '广告拦截（实验）',
-              subtitle: '当前仅保存偏好，网页拦截规则仍在开发',
+              title: '广告拦截',
+              subtitle: '拦截广告、跟踪脚本与弹窗（内置规则）',
               trailing: UiSwitch(
                 value: s.adBlock,
                 onChanged: (value) {
@@ -274,6 +250,155 @@ class _SubPageScaffold extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 搜索引擎单选行：品牌 Logo + 名称 + 选中态。
+class _EngineOptionRow extends StatelessWidget {
+  const _EngineOptionRow({
+    required this.index,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int index;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Row(
+          children: [
+            EngineLogo(index: index, size: 26),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                SearchEngines.name(index),
+                style: const TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (selected)
+              const Icon(Icons.check_circle, color: AppColors.brand, size: 22)
+            else
+              Icon(Icons.circle_outlined,
+                  color: scheme.onSurfaceVariant.withValues(alpha: .4),
+                  size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 搜索设置：常规 / 无痕两套默认引擎 + 地址栏建议开关。
+class _SearchSubPage extends StatelessWidget {
+  const _SearchSubPage(this.model);
+
+  final BoardModel model;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: model,
+      builder: (context, _) {
+        final s = model.settings;
+        return _SubPageScaffold(title: '搜索', children: [
+          const UiSectionLabel('默认搜索引擎'),
+          UiCard(
+            children: [
+              for (var i = 0; i < SearchEngines.names.length; i++)
+                _EngineOptionRow(
+                  index: i,
+                  selected: i == SearchEngines.clamp(s.searchEngineIndex),
+                  onTap: () {
+                    s.searchEngineIndex = i;
+                    model.save();
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const UiSectionLabel('无痕模式搜索引擎'),
+          UiCard(
+            children: [
+              for (var i = 0; i < SearchEngines.names.length; i++)
+                _EngineOptionRow(
+                  index: i,
+                  selected:
+                      i == SearchEngines.clamp(s.privateSearchEngineIndex),
+                  onTap: () {
+                    s.privateSearchEngineIndex = i;
+                    model.save();
+                  },
+                ),
+              const UiTile(
+                icon: Icons.help_outline,
+                title: '什么是无痕搜索引擎？',
+                subtitle: '无痕标签页里搜索时优先使用这里的引擎',
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const UiSectionLabel('地址栏建议'),
+          UiCard(
+            children: [
+              UiTile(
+                icon: Icons.history,
+                title: '近期搜索',
+                subtitle: '地址栏下拉里快速找回最近搜过的内容',
+                trailing: UiSwitch(
+                  value: s.suggestRecent,
+                  onChanged: (value) {
+                    s.suggestRecent = value;
+                    model.save();
+                  },
+                ),
+              ),
+              UiTile(
+                icon: Icons.star_border,
+                title: '搜索书签',
+                trailing: UiSwitch(
+                  value: s.suggestBookmarks,
+                  onChanged: (value) {
+                    s.suggestBookmarks = value;
+                    model.save();
+                  },
+                ),
+              ),
+              UiTile(
+                icon: Icons.history_edu_outlined,
+                title: '搜索历史记录',
+                trailing: UiSwitch(
+                  value: s.suggestHistory,
+                  onChanged: (value) {
+                    s.suggestHistory = value;
+                    model.save();
+                  },
+                ),
+              ),
+              UiTile(
+                icon: Icons.tab_outlined,
+                title: '搜索打开的标签页',
+                trailing: UiSwitch(
+                  value: s.suggestTabs,
+                  onChanged: (value) {
+                    s.suggestTabs = value;
+                    model.save();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ]);
+      },
     );
   }
 }

@@ -12,6 +12,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../core/logic/board_model.dart';
+import '../../../core/logic/search_engines.dart';
+import '../../../core/models/bookmark.dart';
 import '../../../theme/app_theme.dart';
 import '../../downloads/download_center_page.dart';
 import '../../downloads/download_controller.dart';
@@ -22,6 +24,7 @@ import '../widgets/browser_dialogs.dart';
 import 'browser_history.dart';
 import '../logic/browser_javascript.dart';
 import '../logic/browser_navigation.dart';
+import '../logic/ad_blocker.dart';
 import '../services/offline_archive_service.dart';
 import '../services/screenshot_service.dart';
 
@@ -105,6 +108,7 @@ class BrowserPageState extends State<BrowserPage> {
   final BrowserDataStore _dataStore = BrowserDataStore();
   final List<BrowserRecord> _history = [];
   final List<ReadingItem> _readingList = [];
+  List<String> _recentSearches = const [];
   int _active = 0;
   bool _showingTabs = false;
   bool _privateTabsOnly = false;
@@ -166,9 +170,11 @@ class BrowserPageState extends State<BrowserPage> {
     }
   }
 
-  String _normalize(String raw) {
+  String _normalize(String raw, {bool privateTab = false}) {
     return BrowserNavigation(
-      searchEngineIndex: widget.model.settings.searchEngineIndex,
+      searchEngineIndex: privateTab
+          ? widget.model.settings.privateSearchEngineIndex
+          : widget.model.settings.searchEngineIndex,
     ).normalize(raw);
   }
 
@@ -221,7 +227,7 @@ class BrowserPageState extends State<BrowserPage> {
   /// tab for the same address so Home taps never pile up duplicates.
   void openInNewTab(String raw, {bool private = false}) {
     if (!mounted) return;
-    final url = _normalize(raw.trim());
+    final url = _normalize(raw.trim(), privateTab: private);
     if (url.isEmpty) return;
     if (!_isWebScheme(Uri.tryParse(url)?.scheme)) {
       _launchExternally(url);
@@ -286,7 +292,7 @@ class BrowserPageState extends State<BrowserPage> {
       }
     });
     final raw = widget.initialUrl.trim();
-    _addTab(raw.isEmpty ? '' : _normalize(raw),
+    _addTab(raw.isEmpty ? '' : _normalize(raw, privateTab: widget.model.settings.incognito),
         private: widget.model.settings.incognito, deferController: true);
     _loadBrowserData();
     _notifyTabCount();
@@ -296,6 +302,7 @@ class BrowserPageState extends State<BrowserPage> {
   Future<void> _loadBrowserData() async {
     final history = await _dataStore.loadHistory();
     final readingList = await _dataStore.loadReadingList();
+    final recent = await _dataStore.loadRecentSearches();
     if (!mounted) return;
     setState(() {
       _history
@@ -304,6 +311,7 @@ class BrowserPageState extends State<BrowserPage> {
       _readingList
         ..clear()
         ..addAll(readingList);
+      _recentSearches = recent;
     });
   }
 
@@ -318,7 +326,7 @@ class BrowserPageState extends State<BrowserPage> {
         setState(() => _address.clear());
         return;
       }
-      _addTab(raw.isEmpty ? '' : _normalize(raw),
+      _addTab(raw.isEmpty ? '' : _normalize(raw, privateTab: widget.model.settings.incognito),
           private: widget.model.settings.incognito);
     }
   }
@@ -359,6 +367,12 @@ class BrowserPageState extends State<BrowserPage> {
           tab.loading = true;
           tab.error = null;
           tab.errorUrl = null;
+          // 广告拦截：尽早注入规则脚本（含 MutationObserver 兜懒加载）
+          if (widget.model.settings.adBlock && !isLocalCopy) {
+            unawaited(controller
+                .runJavaScript(adBlockerScript())
+                .then((_) {}, onError: (_) {}));
+          }
           // 占位标签页从此转正 → 同步给 Home 的标签条
           _notifyTabCount();
           if (_currentTab == tab) {
@@ -378,6 +392,12 @@ class BrowserPageState extends State<BrowserPage> {
           if (tab.errorUrl == null || tab.errorUrl != value) {
             tab.error = null;
             tab.errorUrl = null;
+          }
+          // DOM 建好后补一遍清理（脚本幂等，MutationObserver 仍在位）
+          if (widget.model.settings.adBlock && !isLocalCopy) {
+            unawaited(controller
+                .runJavaScript(adBlockerScript())
+                .then((_) {}, onError: (_) {}));
           }
           if (_currentTab == tab && !_addressFocus.hasFocus && !isLocalCopy) {
             _address.text = value;
@@ -506,6 +526,10 @@ class BrowserPageState extends State<BrowserPage> {
                 await launchUrl(uri, mode: LaunchMode.externalApplication);
               } catch (_) {}
             }
+            return NavigationDecision.prevent;
+          }
+          // 广告/跟踪域名的主框架跳转（弹窗、中转页）直接拦掉
+          if (widget.model.settings.adBlock && isAdUrl(request.url)) {
             return NavigationDecision.prevent;
           }
           if (_looksLikeDownload(request.url)) {
@@ -821,11 +845,16 @@ class BrowserPageState extends State<BrowserPage> {
   }
 
   void _go(String raw) {
-    final url = _normalize(raw);
+    final url = _normalize(raw, privateTab: _currentTab.private);
     if (!_isWebScheme(Uri.tryParse(url)?.scheme)) {
       _launchExternally(url);
       return;
     }
+    // 搜索词（非网址）记入近期搜索；无痕标签页不留痕。
+    final looksLikeUrl = raw.contains('://') ||
+        raw.contains('.') ||
+        raw.startsWith('localhost');
+    if (!looksLikeUrl) unawaited(_recordRecent(raw.trim()));
     final tab = _currentTab;
     tab.url = url;
     tab.title = _BrowserTab._host(url);
@@ -842,6 +871,242 @@ class BrowserPageState extends State<BrowserPage> {
       tab.controller!.loadRequest(Uri.parse(url));
     }
     setState(() {});
+  }
+
+  /// 用指定引擎执行"本次搜索"（地址栏下拉的引擎快切）。
+  void _searchWith(int engineIndex, String query) {
+    final q = query.trim();
+    if (q.isEmpty) return;
+    final url = SearchEngines.searchUrl(engineIndex, q);
+    _address.text = url;
+    unawaited(_recordRecent(q));
+    _go(url);
+  }
+
+  Future<void> _recordRecent(String query) async {
+    if (query.isEmpty ||
+        _currentTab.private ||
+        !widget.model.settings.suggestRecent) {
+      return;
+    }
+    await _dataStore.addRecentSearch(query);
+    final list = await _dataStore.loadRecentSearches();
+    if (mounted) setState(() => _recentSearches = list);
+  }
+
+  List<BookmarkItem> _allBookmarkItems() {
+    final out = <BookmarkItem>[];
+    void walk(List<BookmarkEntity> list) {
+      for (final e in list) {
+        final item = e.asItem;
+        if (item != null) {
+          out.add(item);
+        } else {
+          walk(e.asFolder?.children ?? const []);
+        }
+      }
+    }
+
+    for (final page in widget.model.pages) {
+      walk(page);
+    }
+    return out;
+  }
+
+  /// 地址栏下拉建议：近期搜索 / 书签 / 历史 / 标签页 + 本次搜索引擎快切。
+  Widget _buildAddressSuggestions() {
+    final s = widget.model.settings;
+    final q = _address.text.trim().toLowerCase();
+    final scheme = Theme.of(context).colorScheme;
+    final defaultEngine =
+        SearchEngines.clamp(_currentTab.private || s.incognito
+            ? s.privateSearchEngineIndex
+            : s.searchEngineIndex);
+
+    final rows = <Widget>[];
+
+    Widget row({
+      required Widget leading,
+      required String title,
+      String? subtitle,
+      required VoidCallback onTap,
+      Widget? trailing,
+    }) {
+      return InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 46,
+          child: Row(
+            children: [
+              const SizedBox(width: 14),
+              SizedBox(width: 24, child: Center(child: leading)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w500)),
+                    if (subtitle != null)
+                      Text(subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              color: scheme.onSurfaceVariant
+                                  .withValues(alpha: .8))),
+                  ],
+                ),
+              ),
+              if (trailing != null) trailing,
+              const SizedBox(width: 10),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (q.isNotEmpty) {
+      rows.add(row(
+        leading: EngineLogo(index: defaultEngine, size: 18),
+        title: '搜索「${_address.text.trim()}」',
+        subtitle: '用 ${SearchEngines.name(defaultEngine)} 搜索',
+        onTap: () => _searchWith(defaultEngine, _address.text),
+      ));
+      // 本次搜索的引擎快切
+      rows.add(SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            const SizedBox(width: 14),
+            Text('本次搜索：',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant.withValues(alpha: .8))),
+            Expanded(
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                children: [
+                  for (var i = 0; i < SearchEngines.names.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: ActionChip(
+                        label: Text(SearchEngines.name(i),
+                            style: const TextStyle(fontSize: 12)),
+                        avatar: EngineLogo(index: i, size: 16),
+                        onPressed: () => _searchWith(i, _address.text),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+
+    final recent = _recentSearches
+        .where((item) => q.isEmpty || item.toLowerCase().contains(q))
+        .take(q.isEmpty ? 8 : 4);
+    if (s.suggestRecent && recent.isNotEmpty) {
+      for (final item in recent) {
+        rows.add(row(
+          leading: Icon(Icons.history,
+              size: 19, color: scheme.onSurfaceVariant),
+          title: item,
+          onTap: () => _go(item),
+          trailing: IconButton(
+            tooltip: '删除该记录',
+            icon: Icon(Icons.close,
+                size: 15, color: scheme.onSurfaceVariant.withValues(alpha: .6)),
+            onPressed: () async {
+              await _dataStore.removeRecentSearch(item);
+              final list = await _dataStore.loadRecentSearches();
+              if (mounted) setState(() => _recentSearches = list);
+            },
+          ),
+        ));
+      }
+    }
+
+    if (q.isNotEmpty && s.suggestBookmarks) {
+      final hits = _allBookmarkItems()
+          .where((b) =>
+              b.name.toLowerCase().contains(q) ||
+              b.url.toLowerCase().contains(q))
+          .take(3);
+      for (final b in hits) {
+        rows.add(row(
+          leading: Icon(Icons.star_border,
+              size: 19, color: scheme.onSurfaceVariant),
+          title: b.name,
+          subtitle: b.url,
+          onTap: () => _go(b.url),
+        ));
+      }
+    }
+
+    if (q.isNotEmpty && s.suggestHistory) {
+      final hits = _history
+          .where((h) =>
+              h.title.toLowerCase().contains(q) ||
+              h.url.toLowerCase().contains(q))
+          .take(3);
+      for (final h in hits) {
+        rows.add(row(
+          leading:
+              Icon(Icons.schedule, size: 19, color: scheme.onSurfaceVariant),
+          title: h.title.isEmpty ? h.url : h.title,
+          subtitle: h.url,
+          onTap: () => _go(h.url),
+        ));
+      }
+    }
+
+    if (q.isNotEmpty && s.suggestTabs) {
+      for (var i = 0; i < _tabs.length; i++) {
+        final t = _tabs[i];
+        if (_isBlank(t)) continue;
+        if (t.title.toLowerCase().contains(q) ||
+            t.url.toLowerCase().contains(q)) {
+          rows.add(row(
+            leading: Icon(Icons.tab_outlined,
+                size: 19, color: scheme.onSurfaceVariant),
+            title: t.title,
+            subtitle: t.url,
+            onTap: () => _selectTab(i),
+          ));
+        }
+      }
+    }
+
+    if (rows.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Material(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
+        elevation: 6,
+        shadowColor: Colors.black26,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 380),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: rows,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _reload() {
@@ -1742,6 +2007,7 @@ class BrowserPageState extends State<BrowserPage> {
       editing: _showingAddressEditor,
       onActivate: _openAddressEditor,
       onSubmit: _go,
+      onChanged: (_) => setState(() {}),
       onClose: _closeAddressEditor,
       private: tab.private,
       onReload: tab.controller == null ? null : _reload,
@@ -1850,8 +2116,9 @@ class BrowserPageState extends State<BrowserPage> {
                                 textInputAction: TextInputAction.go,
                                 textCapitalization: TextCapitalization.none,
                                 autocorrect: false,
-                                enableSuggestions: false,
-                                onSubmitted: _go,
+                                 enableSuggestions: false,
+                                 onSubmitted: _go,
+                                 onChanged: (_) => setState(() {}),
                                 style: TextStyle(
                                     fontSize: 14,
                                     color: tokens.addressBarForeground,
@@ -1903,8 +2170,12 @@ class BrowserPageState extends State<BrowserPage> {
                         ),
                       ),
                     ),
+                  if (desktop && _showingAddressEditor)
+                    _buildAddressSuggestions(),
                   if (!desktop) _buildMobileTabStrip(tokens),
                   if (!desktop) _buildMobileOmnibox(tab),
+                  if (!desktop && _showingAddressEditor)
+                    _buildAddressSuggestions(),
                   if (tab.loading) const LinearProgressIndicator(minHeight: 2),
                   Expanded(
                     child: RepaintBoundary(

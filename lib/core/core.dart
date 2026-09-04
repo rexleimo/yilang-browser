@@ -2,6 +2,7 @@
 library;
 export 'metrics.dart';
 export 'logic/board_model.dart';
+export 'logic/search_engines.dart';
 export 'models/bookmark.dart';
 export 'models/download_task.dart';
 export 'storage/bookmark_store.dart';

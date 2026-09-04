@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bookmark.dart';
 import '../storage/bookmark_store.dart';
+import 'search_engines.dart';
 
 /// 最大页数（防无限翻页拖出新页）
 const int maxPages = 4;
@@ -44,38 +45,62 @@ class DragInfo {
 /// 设置项（P1 为本地开关，P2 接真逻辑）
 class Settings {
   int searchEngineIndex = 1;
+
+  /// 无痕模式下的搜索引擎（与常规模式独立）。
+  int privateSearchEngineIndex = 3;
   bool adBlock = true;
   bool incognito = false;
   bool sync = false;
   bool darkMode = false;
   bool hintSeen = false;
 
-  static const List<String> engines = ['Google', '百度', '必应', 'DuckDuckGo'];
+  /// 地址栏建议开关：关掉的来源不再出现在下拉里。
+  bool suggestRecent = true;
+  bool suggestBookmarks = true;
+  bool suggestHistory = true;
+  bool suggestTabs = true;
+
+  static const List<String> engines = SearchEngines.names;
 
   Map<String, Object?> toJson() => {
         'se': searchEngineIndex,
+        'pse': privateSearchEngineIndex,
         'ad': adBlock,
         'priv': incognito,
         'sync': sync,
         'dark': darkMode,
         'hint': hintSeen,
+        'srs': suggestRecent,
+        'sbm': suggestBookmarks,
+        'shs': suggestHistory,
+        'stb': suggestTabs,
       };
 
   factory Settings.fromJson(Map<String, Object?> j) => Settings()
     ..searchEngineIndex = (j['se'] as num?)?.toInt() ?? 1
+    ..privateSearchEngineIndex = (j['pse'] as num?)?.toInt() ?? 3
     ..adBlock = (j['ad'] as bool?) ?? true
     ..incognito = (j['priv'] as bool?) ?? false
     ..sync = (j['sync'] as bool?) ?? false
     ..darkMode = (j['dark'] as bool?) ?? false
-    ..hintSeen = (j['hint'] as bool?) ?? false;
+    ..hintSeen = (j['hint'] as bool?) ?? false
+    ..suggestRecent = (j['srs'] as bool?) ?? true
+    ..suggestBookmarks = (j['sbm'] as bool?) ?? true
+    ..suggestHistory = (j['shs'] as bool?) ?? true
+    ..suggestTabs = (j['stb'] as bool?) ?? true;
 
   Settings({
     this.searchEngineIndex = 1,
+    this.privateSearchEngineIndex = 3,
     this.adBlock = true,
     this.incognito = false,
     this.sync = false,
     this.darkMode = false,
     this.hintSeen = false,
+    this.suggestRecent = true,
+    this.suggestBookmarks = true,
+    this.suggestHistory = true,
+    this.suggestTabs = true,
   });
 }
 

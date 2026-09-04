@@ -141,7 +141,51 @@ class BrowserDataStore {
   static const _historyKey = 'yilan_browser_history_v1';
   static const _readingKey = 'yilan_reading_list_v1';
   static const _offlineKey = 'yilan_offline_content_v1';
+  static const _recentSearchKey = 'yilan_recent_searches_v1';
   static const _maxHistoryItems = 500;
+  static const _maxRecentSearches = 12;
+
+  /// 近期搜索词：地址栏下拉的快速检索入口（最新在前，去重，上限 12 条）。
+  Future<List<String>> loadRecentSearches() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_recentSearchKey) ?? const [];
+    return [
+      for (final item in raw)
+        if (item.trim().isNotEmpty) item.trim(),
+    ];
+  }
+
+  Future<void> saveRecentSearches(List<String> queries) async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = <String>{};
+    final unique = <String>[];
+    for (final q in queries) {
+      final value = q.trim();
+      if (value.isEmpty || !seen.add(value.toLowerCase())) continue;
+      unique.add(value);
+      if (unique.length >= _maxRecentSearches) break;
+    }
+    await prefs.setStringList(_recentSearchKey, unique);
+  }
+
+  Future<void> addRecentSearch(String query) async {
+    final value = query.trim();
+    if (value.isEmpty) return;
+    final existing = await loadRecentSearches()
+      ..removeWhere((q) => q.toLowerCase() == value.toLowerCase());
+    await saveRecentSearches([value, ...existing]);
+  }
+
+  Future<void> removeRecentSearch(String query) async {
+    final existing = await loadRecentSearches()
+      ..removeWhere((q) => q.toLowerCase() == query.trim().toLowerCase());
+    await saveRecentSearches(existing);
+  }
+
+  Future<void> clearRecentSearches() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_recentSearchKey);
+  }
 
   Future<List<BrowserRecord>> loadHistory() async {
     final prefs = await SharedPreferences.getInstance();

@@ -297,6 +297,7 @@ class EngineLogo extends StatelessWidget {
     ('百', Color(0xFF2932E1)), // 百度
     ('b', Color(0xFF008373)), // 必应
     ('D', Color(0xFFDE5833)), // DuckDuckGo
+    ('W', Color(0xFF202122)), // 维基百科
   ];
 
   @override
@@ -427,6 +428,7 @@ class BrowserOmnibox extends StatelessWidget {
     required this.onActivate,
     required this.onSubmit,
     required this.onClose,
+    this.onChanged,
     this.private = false,
     this.onReload,
     this.engineIndex = 0,
@@ -439,6 +441,7 @@ class BrowserOmnibox extends StatelessWidget {
   final bool editing;
   final VoidCallback onActivate;
   final ValueChanged<String> onSubmit;
+  final ValueChanged<String>? onChanged;
   final VoidCallback onClose;
   final bool private;
   final VoidCallback? onReload;
@@ -490,6 +493,7 @@ class BrowserOmnibox extends StatelessWidget {
                             autocorrect: false,
                             enableSuggestions: false,
                             onSubmitted: onSubmit,
+                            onChanged: onChanged,
                             style: TextStyle(
                               fontSize: 14,
                               color: foreground,
