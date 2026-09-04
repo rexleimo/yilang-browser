@@ -61,24 +61,21 @@ void main() {
     expect(browserState.tabCount, 1);
     expect(browserState.activeTabUrl, 'https://www.bilibili.com');
 
-    await tester.tap(find.byTooltip('回到 Home'));
-    await tester.pump();
-    expect(find.byKey(const ValueKey('home-toolbar-button')), findsOneWidget);
-
+    // 「新建标签页」回到一览主页，不产生空白标签页
     await tester.tap(find.byTooltip('新建标签页'));
     await tester.pump();
     await tester.pump();
-    expect(browserState.tabCount, 2);
+    expect(find.byKey(const ValueKey('home-toolbar-button')), findsOneWidget);
+    expect(browserState.tabCount, 1);
     expect(browserState.tabUrls, contains('https://www.bilibili.com'));
 
-    await tester.tap(find.byTooltip('回到 Home'));
-    await tester.pump();
+    // 再点同一个书签 → 复用现有标签，不堆叠
     await tester.tap(find.byKey(const ValueKey('tile-bilibili')));
     await tester.pump();
     await tester.pump();
 
-    expect(browserState.tabCount, 2);
-    expect(browserState.tabUrls, contains('https://www.bilibili.com'));
+    expect(browserState.tabCount, 1);
+    expect(browserState.activeTabUrl, 'https://www.bilibili.com');
   });
 
   testWidgets('Home tile tap opens a live page in a new tab, not over it',

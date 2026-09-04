@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 /// Legacy palette kept for feature code that has not migrated yet.
 /// New UI should use [Theme.of(context).colorScheme] or [AppTokens].
 class AppColors {
-  /// Brand accent: matches the orange tab strip of the browser shell.
-  static const Color brand = Color(0xFFF89000);
-  static const Color brandStrong = Color(0xFFD37B00);
+  /// Brand accent: matches the indigo chrome of the browser shell.
+  static const Color brand = Color(0xFF4353C4);
+  static const Color brandStrong = Color(0xFF36449E);
   static const Color primary = brandStrong;
   static const Color accent = brand;
   static const Color danger = Color(0xFFD92D20);
@@ -322,12 +322,12 @@ extension ThemeTokens on BuildContext {
 }
 
 const List<List<Color>> _palette = [
-  [Color(0xFF5267E8), Color(0xFF7656D8)],
-  [Color(0xFFE76F51), Color(0xFFF4A261)],
-  [Color(0xFF168A7A), Color(0xFF63C7B2)],
-  [Color(0xFFD94F80), Color(0xFFF29AB8)],
-  [Color(0xFF7656D8), Color(0xFFA98BE8)],
-  [Color(0xFF168AD1), Color(0xFF69C8F2)],
+  [Color(0xFFE9ECFB), Color(0xFF4353C4)],
+  [Color(0xFFFFF0DB), Color(0xFFC07A17)],
+  [Color(0xFFE1F5EB), Color(0xFF1E9C68)],
+  [Color(0xFFFCE7EF), Color(0xFFCE4A7F)],
+  [Color(0xFFEFE9FB), Color(0xFF7A5BD6)],
+  [Color(0xFFE3F2FC), Color(0xFF2E8EC7)],
 ];
 int _hash(String key) =>
     key.codeUnits.fold(0, (h, c) => (h * 31 + c) & 0x7fffffff);

@@ -34,6 +34,7 @@ class AppShell extends StatelessWidget {
     final scaffold = Scaffold(
       appBar: top,
       backgroundColor: Colors.black,
+      resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: true,
       extendBody: false,
       body: _AppShellBackground(child: body),

@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/logic/board_model.dart';
-import 'core/storage/bookmark_store.dart';
 import 'core/storage/download_task_store.dart';
+import 'core/storage/favicon_service.dart';
+import 'core/storage/sqlite_bookmark_store.dart';
 import 'core/widgets/app_shell.dart';
 import 'features/bookmark_desktop/bookmark_desktop_page.dart';
 import 'features/browser/browser_page.dart';
@@ -20,7 +21,8 @@ Future<void> main() async {
     systemNavigationBarColor: Colors.black,
     systemNavigationBarIconBrightness: Brightness.light,
   ));
-  final store = await SharedPrefsBookmarkStore.create();
+  final store = await SqliteBookmarkStore.create();
+  FaviconService.init(FaviconService(store));
   final model = BoardModel(store: store);
   await model.load();
   final downloadStore = await SharedPrefsDownloadTaskStore.create();
@@ -69,9 +71,19 @@ class _HomeShellState extends State<HomeShell> {
   int _tab = _demoUrl.isEmpty ? 0 : 1;
   final int _browserRequest = 0;
   int _settingsReturnTab = 0;
-  int _tabCount = 1;
+  List<BrowserTabSummary> _tabSummaries = const [];
   final String? _pendingUrl = _demoUrl.isEmpty ? null : _demoUrl;
   final GlobalKey<BrowserPageState> _browserKey = GlobalKey<BrowserPageState>();
+
+  /// Home's tab strip chip for a live browser tab: switch into the browser
+  /// with that tab selected, like tapping a start-page tab in iOS Safari.
+  void _openBrowserTab(int index) {
+    widget.model.exitEdit();
+    setState(() => _tab = 1);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _browserKey.currentState?.selectExternalTab(index);
+    });
+  }
 
   void _openUrlInBrowser(String raw) {
     widget.model.exitEdit();
@@ -178,7 +190,8 @@ class _HomeShellState extends State<HomeShell> {
             onOpenTabs: _showBrowserTabs,
             onOpenReadingList: _showReadingList,
             onOpenHistory: _showHistory,
-            tabCount: _tabCount,
+            tabSummaries: _tabSummaries,
+            onSelectBrowserTab: _openBrowserTab,
           ),
           BrowserPage(
             key: _browserKey,
@@ -187,8 +200,8 @@ class _HomeShellState extends State<HomeShell> {
             openRequest: _browserRequest,
             onOpenSettings: () => _openSettings(1),
             onOpenBookmarks: _goToBookmarks,
-            onTabCountChanged: (count) {
-              if (mounted) setState(() => _tabCount = count);
+            onTabsChanged: (summaries) {
+              if (mounted) setState(() => _tabSummaries = summaries);
             },
             downloads: widget.downloads,
           ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
+import 'ui_kit.dart';
 
 /// Shared mobile browser chrome: the orange tab strip, toolbar buttons,
 /// floating address editor and menu sheet. Home (bookmark desktop) and the
@@ -25,7 +26,7 @@ class BrowserBrandMark extends StatelessWidget {
       height: 20,
       decoration: BoxDecoration(
         color: selected ? AppColors.brand : AppColors.brandStrong,
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(6),
       ),
       alignment: Alignment.center,
       child: Text(
@@ -47,6 +48,7 @@ class BrowserTabChip extends StatelessWidget {
     required this.label,
     required this.selected,
     this.private = false,
+    this.faviconUrl,
     this.onTap,
     this.onClose,
     this.width = 104,
@@ -55,6 +57,7 @@ class BrowserTabChip extends StatelessWidget {
   final String label;
   final bool selected;
   final bool private;
+  final String? faviconUrl;
   final VoidCallback? onTap;
   final VoidCallback? onClose;
   final double width;
@@ -64,10 +67,10 @@ class BrowserTabChip extends StatelessWidget {
     final tokens = context.browserTokens;
     final foreground = selected ? tokens.addressBarForeground : Colors.white;
     return Material(
-      color: selected ? tokens.toolbarBackground : AppColors.brand,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        color: selected ? tokens.toolbarBackground : AppColors.brand,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: SizedBox(
           width: width,
@@ -75,7 +78,20 @@ class BrowserTabChip extends StatelessWidget {
           child: Row(
             children: [
               const SizedBox(width: 8),
-              BrowserBrandMark(letter: private ? 'P' : 'V', selected: selected),
+              if (faviconUrl != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(5),
+                  child: Image.network(
+                    faviconUrl!,
+                    width: 18,
+                    height: 18,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => BrowserBrandMark(
+                        letter: private ? 'P' : 'V', selected: selected),
+                  ),
+                )
+              else
+                BrowserBrandMark(letter: private ? 'P' : 'V', selected: selected),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -163,9 +179,9 @@ class BrowserTabStrip extends StatelessWidget {
   }
 }
 
-/// Bottom-toolbar button: a 48px rounded chip with an optional tab-count
-/// badge. Selected, pressed and disabled states all come from the theme so
-/// every surface reads the same.
+/// Bottom-toolbar button: a plain icon (no chip background, Vivaldi-style).
+/// When [badge] is set the glyph becomes a rounded-square outline holding the
+/// tab count, like the reference browser's tab-count button.
 class BrowserToolbarButton extends StatelessWidget {
   const BrowserToolbarButton({
     super.key,
@@ -185,65 +201,47 @@ class BrowserToolbarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final button = IconButton(
+    final enabled = onPressed != null;
+    Color fg;
+    if (selected) {
+      fg = AppColors.brandStrong;
+    } else if (!enabled) {
+      fg = scheme.onSurface.withValues(alpha: .28);
+    } else {
+      fg = scheme.onSurfaceVariant;
+    }
+    final Widget glyph = badge != null
+        ? Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: fg, width: 1.8),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              badge!,
+              style: TextStyle(
+                color: fg,
+                fontSize: 12.5,
+                height: 1,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          )
+        : Icon(icon, size: 22);
+    return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
-      icon: Icon(icon, size: 20),
+      icon: glyph,
       style: IconButton.styleFrom(
         minimumSize: const Size(48, 48),
         padding: EdgeInsets.zero,
-        backgroundColor: selected
-            ? AppColors.brand.withValues(alpha: .16)
-            : scheme.surfaceContainerHighest.withValues(alpha: .62),
-        // A selected-but-disabled button (e.g. "Home" while already on the
-        // home page) must keep its selected look; only unselected buttons
-        // fade when disabled.
-        disabledBackgroundColor: selected
-            ? AppColors.brand.withValues(alpha: .16)
-            : scheme.surfaceContainerHighest.withValues(alpha: .28),
-        disabledForegroundColor: selected
-            ? AppColors.brandStrong
-            : scheme.onSurface.withValues(alpha: .28),
-        foregroundColor:
-            selected ? AppColors.brandStrong : scheme.onSurfaceVariant,
+        backgroundColor: Colors.transparent,
+        disabledBackgroundColor: Colors.transparent,
+        foregroundColor: fg,
+        disabledForegroundColor: fg,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-    if (badge == null) return button;
-    return SizedBox(
-      width: 48,
-      height: 48,
-      child: Stack(
-        alignment: Alignment.center,
-        clipBehavior: Clip.none,
-        children: [
-          button,
-          Positioned(
-            right: 1,
-            top: 1,
-            child: IgnorePointer(
-              child: Container(
-                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.brand,
-                  borderRadius: BorderRadius.circular(9),
-                  border: Border.all(color: Colors.white, width: 1.5),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  badge!,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    height: 1.2,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -279,6 +277,45 @@ class BrowserToolbarFrame extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: buttons,
+        ),
+      ),
+    );
+  }
+}
+
+/// 搜索引擎品牌标（地址栏左侧显示当前引擎）。
+class EngineLogo extends StatelessWidget {
+  const EngineLogo({super.key, required this.index, this.size = 18});
+
+  final int index;
+  final double size;
+
+  static const _brands = [
+    ('G', Color(0xFF4285F4)), // Google
+    ('百', Color(0xFF2932E1)), // 百度
+    ('b', Color(0xFF008373)), // 必应
+    ('D', Color(0xFFDE5833)), // DuckDuckGo
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final (letter, color) =
+        _brands[index.clamp(0, _brands.length - 1)];
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(size * .3),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        letter,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: size * .62,
+          height: 1,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );
@@ -334,27 +371,32 @@ class AddressEditorBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: TextField(
-              controller: controller,
+            child: KeyboardFocusKickoff(
               focusNode: focusNode,
-              autofocus: autofocus,
-              keyboardType: TextInputType.text,
-              textInputAction: TextInputAction.go,
-              textCapitalization: TextCapitalization.none,
-              autocorrect: false,
-              enableSuggestions: false,
-              onSubmitted: onSubmit,
-              style: TextStyle(
-                fontSize: 15,
-                color: tokens.addressBarForeground,
-                fontWeight: FontWeight.w500,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: hintText,
-                border: InputBorder.none,
-                hintStyle: TextStyle(
-                    color: tokens.addressBarForeground.withValues(alpha: .45)),
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                autofocus: autofocus,
+                keyboardType: TextInputType.text,
+                textInputAction: TextInputAction.go,
+                textCapitalization: TextCapitalization.none,
+                autocorrect: false,
+                enableSuggestions: false,
+                onSubmitted: onSubmit,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: tokens.addressBarForeground,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  filled: false,
+                  hintText: hintText,
+                  border: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  hintStyle: TextStyle(
+                      color: tokens.addressBarForeground.withValues(alpha: .45)),
+                ),
               ),
             ),
           ),
@@ -385,6 +427,7 @@ class BrowserOmnibox extends StatelessWidget {
     required this.onClose,
     this.private = false,
     this.onReload,
+    this.engineIndex = 0,
   });
 
   final TextEditingController controller;
@@ -397,6 +440,9 @@ class BrowserOmnibox extends StatelessWidget {
   final VoidCallback onClose;
   final bool private;
   final VoidCallback? onReload;
+
+  /// 当前搜索引擎序号（用于左侧品牌 logo）。
+  final int engineIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -417,39 +463,45 @@ class BrowserOmnibox extends StatelessWidget {
             child: Row(
               children: [
                 const SizedBox(width: 12),
-                Icon(
-                  private
-                      ? Icons.visibility_off_outlined
-                      : hasLocation
-                          ? Icons.lock_outline
-                          : Icons.search,
-                  color: foreground.withValues(alpha: .72),
-                  size: 18,
-                ),
+                if (private || hasLocation)
+                  Icon(
+                    private
+                        ? Icons.visibility_off_outlined
+                        : Icons.lock_outline,
+                    color: foreground.withValues(alpha: .72),
+                    size: 18,
+                  )
+                else
+                  EngineLogo(index: engineIndex, size: 18),
                 const SizedBox(width: 9),
                 Expanded(
                   child: editing
-                      ? TextField(
-                          key: const ValueKey('browser-omnibox-input'),
-                          controller: controller,
+                      ? KeyboardFocusKickoff(
                           focusNode: focusNode,
-                          keyboardType: TextInputType.url,
-                          textInputAction: TextInputAction.go,
-                          textCapitalization: TextCapitalization.none,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          onSubmitted: onSubmit,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: foreground,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            border: InputBorder.none,
-                            hintText: hintText,
-                            hintStyle: TextStyle(
-                              color: foreground.withValues(alpha: .48),
+                          child: TextField(
+                            key: const ValueKey('browser-omnibox-input'),
+                            controller: controller,
+                            focusNode: focusNode,
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.go,
+                            textCapitalization: TextCapitalization.none,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            onSubmitted: onSubmit,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: foreground,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              filled: false,
+                              border: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              hintText: hintText,
+                              hintStyle: TextStyle(
+                                color: foreground.withValues(alpha: .48),
+                              ),
                             ),
                           ),
                         )
@@ -490,10 +542,28 @@ class BrowserOmnibox extends StatelessWidget {
   }
 }
 
-/// Consistent bottom menu sheet: a drag handle above a list of [menuTile]s.
+/// 面板菜单里的一个分类（UC / iOS 设置式：先分类，点进去再看具体条目）。
+class BrowserMenuCategory {
+  const BrowserMenuCategory({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    required this.actions,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final List<Widget> actions;
+}
+
+/// Consistent bottom menu sheet: a Brave-style icon grid — all actions
+/// flattened into 4-column cells (icon + label). Tapping an entry either
+/// performs the action or pushes a full settings page.
 Future<void> showBrowserMenuSheet(
   BuildContext context, {
-  required List<Widget> tiles,
+  required List<BrowserMenuCategory> categories,
+  String title = '面板',
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -501,13 +571,14 @@ Future<void> showBrowserMenuSheet(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     constraints: BoxConstraints(
-      maxHeight: MediaQuery.sizeOf(context).height * .62,
+      maxHeight: MediaQuery.sizeOf(context).height * .56,
     ),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
     builder: (ctx) {
       final scrollController = ScrollController();
+      final actions = [for (final c in categories) ...c.actions];
       return SafeArea(
         child: Material(
           color: Theme.of(ctx).colorScheme.surface,
@@ -517,7 +588,7 @@ Future<void> showBrowserMenuSheet(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                margin: const EdgeInsets.only(top: 10, bottom: 4),
+                margin: const EdgeInsets.only(top: 10, bottom: 2),
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
@@ -528,32 +599,30 @@ Future<void> showBrowserMenuSheet(
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 16, 4),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text('面板',
-                          style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.w700)),
-                    ),
-                    IconButton(
-                      tooltip: '关闭面板',
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
+              Expanded(
+                child: GridView.builder(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    childAspectRatio: .92,
+                  ),
+                  itemCount: actions.length,
+                  itemBuilder: (ctx, i) => actions[i],
                 ),
               ),
-              Flexible(
-                child: Scrollbar(
-                  controller: scrollController,
-                  thumbVisibility: true,
-                  child: ListView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    children: tiles,
-                  ),
+              // 收起（Brave 菜单底部习惯）
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: IconButton(
+                  tooltip: '收起面板',
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: Icon(Icons.keyboard_arrow_down,
+                      size: 26,
+                      color: Theme.of(ctx)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withValues(alpha: .7)),
                 ),
               ),
             ],
@@ -564,7 +633,7 @@ Future<void> showBrowserMenuSheet(
   );
 }
 
-/// One line inside a menu sheet.
+/// 一个网格菜单项（Brave 风格：图标 + 标签，居中）。
 Widget menuTile(
   BuildContext context, {
   required IconData icon,
@@ -573,18 +642,28 @@ Widget menuTile(
   required VoidCallback onTap,
 }) {
   final scheme = Theme.of(context).colorScheme;
-  return Tooltip(
-    message: title,
-    child: ListTile(
-      leading: Icon(icon, color: scheme.onSurfaceVariant),
-      title: Text(title,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-      subtitle: subtitle == null
-          ? null
-          : Text(subtitle,
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-      onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+  return InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(14),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 24, color: AppColors.ink),
+          const SizedBox(height: 7),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurface.withValues(alpha: .85),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }

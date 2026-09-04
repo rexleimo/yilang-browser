@@ -18,6 +18,9 @@ dependencies:
   path_provider: ^2.1.5
   # 将下载链接交给系统下载器处理
   url_launcher: ^6.3.1
+  # SQLite3 持久化（书签/设置/favicon 二进制缓存），自带原生库
+  sqlite3: ^2.4.6
+  sqlite3_flutter_libs: ^0.5.24
 
 dev_dependencies:
   flutter_test:

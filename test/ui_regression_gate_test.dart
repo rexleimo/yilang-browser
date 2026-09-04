@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yilan_browser/core/logic/board_model.dart';
 import 'package:yilan_browser/core/models/bookmark.dart';
 import 'package:yilan_browser/core/storage/bookmark_store.dart';
 import 'package:yilan_browser/core/widgets/app_shell.dart';
+import 'package:yilan_browser/core/widgets/ui_kit.dart';
 import 'package:yilan_browser/features/browser/browser_page.dart';
 import 'package:yilan_browser/features/settings/settings_page.dart';
 import 'package:yilan_browser/main.dart';
@@ -38,7 +39,7 @@ void main() {
 
         expect(find.byType(AppShell), findsOneWidget);
         expect(find.byType(NavigationBar), findsNothing);
-        expect(find.text('书签'), findsWidgets);
+        expect(find.text('首页'), findsWidgets);
         expect(find.byTooltip('标签页'), findsWidgets);
         expect(find.byTooltip('面板'), findsOneWidget);
         expect(find.byType(OverflowBar), findsNothing);
@@ -49,20 +50,20 @@ void main() {
         await tester.pump();
         expect(find.byType(BrowserPage), findsOneWidget);
         // Home's tab button must land in the live tab overview, not a new tab.
-        expect(find.byTooltip('返回'), findsOneWidget);
+        expect(find.byTooltip('完成'), findsOneWidget);
         expect(find.byType(TextField), findsNothing);
-        await tester.tap(find.byTooltip('返回'));
+        await tester.tap(find.byTooltip('完成'));
         await tester.pump();
         if (size.width < 840) {
           // fromHome overview returns to the Home/dial surface, and search is
           // the dedicated header entry there.
-          expect(find.text('书签'), findsWidgets);
+          expect(find.text('首页'), findsWidgets);
           await tester.tap(find.byKey(const ValueKey('home-omnibox')));
           await tester.pump();
           expect(find.byTooltip('关闭搜索'), findsOneWidget);
         } else {
           // 800px-height test surfaces count as compact; just be back at Home.
-          expect(find.text('书签'), findsWidgets);
+          expect(find.text('首页'), findsWidgets);
         }
         expect(tester.takeException(), isNull);
       });
@@ -80,10 +81,37 @@ void main() {
     testWidgets('privacy entry opens a readable dialog', (tester) async {
       await tester.pumpWidget(MaterialApp(home: SettingsPage(model: _model())));
       await tester.pump();
+      // 页面变高后「关于」区块可能在首屏外，先滚到它
+      await tester.scrollUntilVisible(
+        find.text('隐私说明'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.ensureVisible(find.text('隐私说明'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('隐私说明').last);
       await tester.pumpAndSettle();
       expect(find.text('隐私说明'), findsWidgets);
       expect(find.textContaining('无痕标签页关闭后不写入历史或书签'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('appearance sub-page opens and toggles dark mode',
+        (tester) async {
+      // 回归背景：外观子页曾依赖从未挂载的 SettingsScope InheritedWidget，
+      // 点进「外观」即红屏（SettingsScope not found）。
+      final model = _model();
+      await tester.pumpWidget(MaterialApp(home: SettingsPage(model: model)));
+      await tester.pump();
+      await tester.tap(find.text('外观'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('深色模式'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byType(UiSwitch));
+      await tester.pumpAndSettle();
+      expect(model.settings.darkMode, isTrue);
       expect(tester.takeException(), isNull);
     });
   });

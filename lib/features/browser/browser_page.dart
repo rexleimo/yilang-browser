@@ -18,6 +18,7 @@ import '../downloads/download_controller.dart';
 import 'browser_data_store.dart';
 import '../../core/widgets/browser_chrome.dart';
 import 'browser_collections_page.dart';
+import 'browser_dialogs.dart';
 import 'browser_history.dart';
 import 'browser_javascript.dart';
 import 'browser_navigation.dart';
@@ -34,6 +35,7 @@ class BrowserPage extends StatefulWidget {
     this.onOpenSettings,
     this.onOpenBookmarks,
     this.onTabCountChanged,
+    this.onTabsChanged,
     this.downloads,
   });
 
@@ -43,6 +45,7 @@ class BrowserPage extends StatefulWidget {
   final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenBookmarks;
   final ValueChanged<int>? onTabCountChanged;
+  final ValueChanged<List<BrowserTabSummary>>? onTabsChanged;
   final DownloadController? downloads;
 
   @override
@@ -60,6 +63,8 @@ class _BrowserTab {
   bool canGoBack = false;
   bool canGoForward = false;
   String? error;
+  String? previewImageUrl; // og:image / apple-touch-icon，封面兜底
+  String? faviconUrl; // 站点小图标，显示在标签标题旁（浏览器 tab 习惯）
   WebViewController? controller;
   final GlobalKey previewKey = GlobalKey();
   Uint8List? previewBytes;
@@ -68,6 +73,20 @@ class _BrowserTab {
     final host = value.replaceFirst(RegExp(r'^https?://'), '').split('/').first;
     return host.isEmpty ? '新标签页' : host;
   }
+}
+
+/// Read-only snapshot of a live browser tab, published so the Home tab strip
+/// can render every open tab like iOS Safari's start page does.
+class BrowserTabSummary {
+  const BrowserTabSummary({
+    required this.title,
+    required this.private,
+    this.faviconUrl,
+  });
+
+  final String title;
+  final bool private;
+  final String? faviconUrl;
 }
 
 class BrowserPageState extends State<BrowserPage> {
@@ -86,6 +105,7 @@ class BrowserPageState extends State<BrowserPage> {
   bool _showingAddressEditor = false;
   bool _returnTabsToHome = false;
   Color _chromeColor = Colors.black;
+  final Set<_BrowserTab> _pendingCaptures = {};
 
   bool get hasWebPage =>
       _currentTab.controller != null && _currentTab.url.isNotEmpty;
@@ -178,13 +198,14 @@ class BrowserPageState extends State<BrowserPage> {
     _go(value);
   }
 
-  /// Creates a tab only when the user explicitly asks for one.
+  /// "New tab" from external surfaces: no blank page is created — the user is
+  /// taken back to the 一览 home to pick a bookmark or type an address. A tab
+  /// is only created once a real URL is opened.
   void openNewTab({bool private = false}) {
     if (!mounted) return;
     _showingTabs = false;
     _showingAddressEditor = false;
-    _addTab('', private: private);
-    _openAddressEditor();
+    widget.onOpenBookmarks?.call();
   }
 
   /// Opens a URL reached by tapping a Home tile.
@@ -214,11 +235,35 @@ class BrowserPageState extends State<BrowserPage> {
     _addTab(url, private: private);
   }
 
+  /// 未加载过网页的占位标签页（新标签页）。它不占用任何 tab UI：
+  /// 条、角标、概览、同步给主页的摘要都把它过滤掉；用户真正打开网页时它
+  /// 才「转正」。新建标签的动作直接回「一览」主页。
+  static bool _isBlank(_BrowserTab tab) =>
+      tab.url.isEmpty && tab.controller == null;
+
   /// Reports the live tab count without mutating an ancestor mid-build.
   void _notifyTabCount() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onTabCountChanged?.call(_tabs.length);
+      if (!mounted) return;
+      widget.onTabCountChanged?.call(_realTabCount);
+      widget.onTabsChanged?.call([
+        for (final tab in _tabs)
+          if (!_isBlank(tab))
+            BrowserTabSummary(
+              title: tab.title,
+              private: tab.private,
+              faviconUrl: tab.faviconUrl,
+            ),
+      ]);
     });
+  }
+
+  int get _realTabCount => _tabs.where((t) => !_isBlank(t)).length;
+
+  /// Switches to [index] from an external surface (the Home tab strip).
+  void selectExternalTab(int index) {
+    if (!mounted) return;
+    _selectTab(index);
   }
 
   @override
@@ -303,6 +348,8 @@ class BrowserPageState extends State<BrowserPage> {
           if (!isLocalCopy) tab.url = value;
           tab.loading = true;
           tab.error = null;
+          // 占位标签页从此转正 → 同步给 Home 的标签条
+          _notifyTabCount();
           if (_currentTab == tab) {
             setState(() {
               _chromeColor = Colors.black;
@@ -330,6 +377,69 @@ class BrowserPageState extends State<BrowserPage> {
                   if(document.head){document.head.appendChild(s)}else{document.documentElement.appendChild(s)};
                 })();
               ''');
+            } catch (_) {}
+          }
+          // 封面：og:image → twitter:image → apple-touch-icon，供概览大图
+          if (!isLocalCopy) {
+            try {
+              final cover = await controller.runJavaScriptReturningResult('''
+                (function(){
+                  var el = document.querySelector('meta[property="og:image"]') ||
+                           document.querySelector('meta[name="twitter:image"]') ||
+                           document.querySelector('link[rel="apple-touch-icon"]');
+                  if (!el) return '';
+                  var v = el.getAttribute('content') || el.getAttribute('href') || '';
+                  if (!v) return '';
+                  return new URL(v, document.baseURI).href;
+                })()
+              ''');
+              final coverStr = cover
+                  .toString()
+                  .trim()
+                  .replaceAll("'", '')
+                  .replaceAll('"', '');
+              if (coverStr.isNotEmpty &&
+                  coverStr != 'null' &&
+                  mounted &&
+                  _tabs.contains(tab)) {
+                setState(() => tab.previewImageUrl = coverStr);
+              }
+            } catch (_) {}
+          }
+          // 站点小图标：与浏览器标签页的 favicon 同源
+          if (!isLocalCopy) {
+            try {
+              final icon = await controller.runJavaScriptReturningResult('''
+                (function(){
+                  function abs(el){
+                    if (!el) return '';
+                    var v = el.getAttribute('href') || '';
+                    if (!v) return '';
+                    return new URL(v, document.baseURI).href;
+                  }
+                  var sizes = document.querySelectorAll(
+                    'link[rel~="icon"], link[rel="shortcut icon"]');
+                  var best = null, bestSize = 0;
+                  sizes.forEach(function(el){
+                    var s = parseInt(el.getAttribute('sizes') || '0') || 16;
+                    if (s >= bestSize) { bestSize = s; best = el; }
+                  });
+                  if (best) return abs(best);
+                  // 很多站点（如知乎）只有 apple-touch-icon，一并兜底
+                  return abs(document.querySelector('link[rel="apple-touch-icon"]'));
+                })()
+              ''');
+              final iconStr = icon
+                  .toString()
+                  .trim()
+                  .replaceAll("'", '')
+                  .replaceAll('"', '');
+              if (iconStr.isNotEmpty &&
+                  iconStr != 'null' &&
+                  mounted &&
+                  _tabs.contains(tab)) {
+                setState(() => tab.faviconUrl = iconStr);
+              }
             } catch (_) {}
           }
           try {
@@ -364,6 +474,8 @@ class BrowserPageState extends State<BrowserPage> {
           await _refreshNavigationState(tab);
           if (!tab.private && !isLocalCopy) _recordHistory(tab);
           _captureTabPreview(tab);
+          // 标题/转正状态可能变化 → 同步给 Home 的标签条
+          _notifyTabCount();
           if (_currentTab == tab) setState(() {});
         },
         onNavigationRequest: (request) async {
@@ -454,13 +566,17 @@ class BrowserPageState extends State<BrowserPage> {
     }
   }
 
-  /// Capture the active WebView once for the tab switcher. Platform views may
-  /// not be rasterizable on every engine, so cards have a deterministic
-  /// fallback instead of mounting the same WebView twice.
+  /// Capture the active WebView for the tab switcher. A short delay lets the
+  /// platform-view texture rasterize first — capturing on the frame where the
+  /// page finished produces a blank white thumbnail. Re-captured on every
+  /// finished load and whenever the overview opens with a missing snapshot.
   void _captureTabPreview(_BrowserTab tab) {
-    if (tab.previewBytes != null) return;
+    if (_pendingCaptures.contains(tab)) return;
+    _pendingCaptures.add(tab);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || !_tabs.contains(tab) || tab.previewBytes != null) return;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      _pendingCaptures.remove(tab);
+      if (!mounted || !_tabs.contains(tab)) return;
       final boundary = tab.previewKey.currentContext?.findRenderObject()
           as RenderRepaintBoundary?;
       if (boundary == null || boundary.size.isEmpty) return;
@@ -562,6 +678,7 @@ class BrowserPageState extends State<BrowserPage> {
       await tab.controller!.clearLocalStorage();
     }
     if (!mounted || !_tabs.contains(tab)) return;
+    var backToHome = false;
     if (_tabs.length == 1) {
       tab.controller = null;
       tab.url = '';
@@ -570,16 +687,19 @@ class BrowserPageState extends State<BrowserPage> {
       tab.error = null;
       _address.clear();
       setState(() => _showingTabs = false);
-      _notifyTabCount();
-      return;
+      backToHome = true; // 只剩占位页 → 直接回「一览」
+    } else {
+      setState(() {
+        _tabs.removeAt(index);
+        if (_active > index) _active--;
+        if (_active >= _tabs.length) _active = _tabs.length - 1;
+        _address.text = _currentTab.url;
+      });
+      // 关掉后没有任何真实网页了 → 回「一览」
+      backToHome = _tabs.every(_isBlank);
     }
-    setState(() {
-      _tabs.removeAt(index);
-      if (_active > index) _active--;
-      if (_active >= _tabs.length) _active = _tabs.length - 1;
-      _address.text = _currentTab.url;
-    });
     _notifyTabCount();
+    if (backToHome) widget.onOpenBookmarks?.call();
   }
 
   void _selectTab(int index) {
@@ -602,6 +722,15 @@ class BrowserPageState extends State<BrowserPage> {
       _returnTabsToHome = fromHome;
       _showingAddressEditor = false;
       _showingTabs = true;
+    });
+    // 概览作为覆盖层显示（内容树保持挂载），打开时给缺快照的标签页补拍。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      for (final tab in _tabs) {
+        if (tab.controller != null && tab.previewBytes == null) {
+          _captureTabPreview(tab);
+        }
+      }
     });
   }
 
@@ -689,26 +818,7 @@ class BrowserPageState extends State<BrowserPage> {
           .showSnackBar(const SnackBar(content: Text('请先打开一个网页')));
       return;
     }
-    final nameController = TextEditingController(text: tab.title);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('收藏网页'),
-        content: TextField(
-          controller: nameController,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: '名称'),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-              child: const Text('保存')),
-        ],
-      ),
-    );
-    nameController.dispose();
+    final name = await showBookmarkNameDialog(context, initialName: tab.title);
     if (name != null && name.isNotEmpty) {
       await widget.model.addBookmark(url: tab.url, name: name);
     }
@@ -721,44 +831,34 @@ class BrowserPageState extends State<BrowserPage> {
   Future<void> _findInPage() async {
     final controller = _currentController;
     if (controller == null) return;
-    final input = TextEditingController();
-    final query = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('在页面中查找'),
-        content: TextField(
-          controller: input,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          decoration: const InputDecoration(hintText: '输入文字'),
-          onSubmitted: (value) => Navigator.pop(ctx, value.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ''),
-            child: const Text('清除高亮'),
-          ),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, input.text.trim()),
-            child: const Text('查找'),
-          ),
-        ],
-      ),
-    );
-    input.dispose();
+    final query = await showFindInPageDialog(context);
     if (query == null) return;
     if (query.isEmpty) {
-      await controller.runJavaScript(BrowserJavaScript.clearHighlights);
+      try {
+        await controller.runJavaScript(BrowserJavaScript.clearHighlights);
+      } catch (_) {
+        // 页面未加载完成或脚本注入失败时静默忽略。
+      }
       return;
     }
-    final result = await controller.runJavaScriptReturningResult(
-      BrowserJavaScript.findAndHighlight(query),
-    );
+    Object? result;
+    try {
+      result = await controller.runJavaScriptReturningResult(
+        BrowserJavaScript.findAndHighlight(query),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前页面不支持查找高亮')),
+      );
+      return;
+    }
     if (!mounted) return;
+    // Android 返回形如 "3" 的字符串；去掉可能的引号再解析。
+    final raw = result.toString().replaceAll("'", '');
+    final count = int.tryParse(raw) ?? 0;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('找到 $result 处匹配内容')),
+      SnackBar(content: Text('找到 $count 处匹配内容')),
     );
   }
 
@@ -985,82 +1085,124 @@ class BrowserPageState extends State<BrowserPage> {
   }
 
   void _showBrowserMenu() {
-    showBrowserMenuSheet(context, tiles: [
-      menuTile(context, icon: Icons.search, title: '搜索或输入网址', onTap: () {
-        Navigator.pop(context);
-        _openAddressEditor();
-      }),
-      menuTile(context, icon: Icons.find_in_page_outlined, title: '在页面中查找',
-          onTap: () {
-        Navigator.pop(context);
-        _findInPage();
-      }),
-      menuTile(context,
-          icon: Icons.screenshot_outlined,
-          title: '保存页面截图',
-          subtitle: '当前内核优先截取可见区域', onTap: () {
-        Navigator.pop(context);
-        _saveScreenshot();
-      }),
-      menuTile(context, icon: Icons.share_outlined, title: '分享页面', onTap: () {
-        Navigator.pop(context);
-        _sharePage();
-      }),
-      menuTile(context, icon: Icons.translate, title: '翻译为中文', onTap: () {
-        Navigator.pop(context);
-        _translatePage();
-      }),
-      menuTile(context, icon: Icons.star_border, title: '收藏网页', onTap: () {
-        Navigator.pop(context);
-        _saveBookmark();
-      }),
-      menuTile(context, icon: Icons.bookmark_add_outlined, title: '加入阅读清单',
-          onTap: () {
-        Navigator.pop(context);
-        _addToReadingList();
-      }),
-      menuTile(context, icon: Icons.history, title: '历史记录', onTap: () {
-        Navigator.pop(context);
-        _showCollection(history: true);
-      }),
-      menuTile(context, icon: Icons.chrome_reader_mode_outlined, title: '阅读清单',
-          onTap: () {
-        Navigator.pop(context);
-        _showCollection(history: false);
-      }),
+    showBrowserMenuSheet(context, categories: [
+      BrowserMenuCategory(
+        icon: Icons.build_outlined,
+        title: '页面工具',
+        subtitle: '查找、截图、分享、翻译',
+        actions: [
+          menuTile(context, icon: Icons.search, title: '搜索或输入网址', onTap: () {
+            Navigator.pop(context);
+            _openAddressEditor();
+          }),
+          menuTile(context, icon: Icons.find_in_page_outlined, title: '在页面中查找',
+              onTap: () {
+            Navigator.pop(context);
+            _findInPage();
+          }),
+          menuTile(context,
+              icon: Icons.screenshot_outlined,
+              title: '保存页面截图',
+              subtitle: '当前内核优先截取可见区域', onTap: () {
+            Navigator.pop(context);
+            _saveScreenshot();
+          }),
+          menuTile(context, icon: Icons.share_outlined, title: '分享页面', onTap: () {
+            Navigator.pop(context);
+            _sharePage();
+          }),
+          menuTile(context, icon: Icons.translate, title: '翻译为中文', onTap: () {
+            Navigator.pop(context);
+            _translatePage();
+          }),
+        ],
+      ),
+      BrowserMenuCategory(
+        icon: Icons.collections_bookmark_outlined,
+        title: '收藏与阅读',
+        subtitle: '收藏网页、阅读清单',
+        actions: [
+          menuTile(context, icon: Icons.star_border, title: '收藏网页', onTap: () {
+            Navigator.pop(context);
+            _saveBookmark();
+          }),
+          menuTile(context, icon: Icons.bookmark_add_outlined, title: '加入阅读清单',
+              onTap: () {
+            Navigator.pop(context);
+            _addToReadingList();
+          }),
+          menuTile(context, icon: Icons.chrome_reader_mode_outlined, title: '阅读清单',
+              onTap: () {
+            Navigator.pop(context);
+            _showCollection(history: false);
+          }),
+        ],
+      ),
+      BrowserMenuCategory(
+        icon: Icons.history,
+        title: '浏览数据',
+        subtitle: '历史记录',
+        actions: [
+          menuTile(context, icon: Icons.history, title: '历史记录', onTap: () {
+            Navigator.pop(context);
+            _showCollection(history: true);
+          }),
+        ],
+      ),
       if (widget.downloads != null)
-        menuTile(context, icon: Icons.download_outlined, title: '下载中心',
-            onTap: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  DownloadCenterPage(controller: widget.downloads!),
-            ),
-          );
-        }),
-      menuTile(context, icon: Icons.visibility_off_outlined, title: '新建无痕标签页',
-          onTap: () {
-        Navigator.pop(context);
-        _addTab('', private: true);
-      }),
-      menuTile(context, icon: Icons.settings_outlined, title: '浏览器设置',
-          onTap: () {
-        Navigator.pop(context);
-        widget.onOpenSettings?.call();
-      }),
-      menuTile(context, icon: Icons.delete_sweep_outlined, title: '关闭其他标签页',
-          onTap: () {
-        Navigator.pop(context);
-        final activeTab = _currentTab;
-        setState(() {
-          _tabs
-            ..clear()
-            ..add(activeTab);
-          _active = 0;
-        });
-      }),
+        BrowserMenuCategory(
+          icon: Icons.download_outlined,
+          title: '下载中心',
+          subtitle: '查看下载任务',
+          actions: [
+            menuTile(context, icon: Icons.download_outlined, title: '查看下载任务',
+                onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      DownloadCenterPage(controller: widget.downloads!),
+                ),
+              );
+            }),
+          ],
+        ),
+      BrowserMenuCategory(
+        icon: Icons.tab_outlined,
+        title: '标签页',
+        subtitle: '无痕浏览、整理标签页',
+        actions: [
+          menuTile(context, icon: Icons.visibility_off_outlined, title: '新建无痕标签页',
+              onTap: () {
+            Navigator.pop(context);
+            _addTab('', private: true);
+          }),
+          menuTile(context, icon: Icons.delete_sweep_outlined, title: '关闭其他标签页',
+              onTap: () {
+            Navigator.pop(context);
+            final activeTab = _currentTab;
+            setState(() {
+              _tabs
+                ..clear()
+                ..add(activeTab);
+              _active = 0;
+            });
+          }),
+        ],
+      ),
+      BrowserMenuCategory(
+        icon: Icons.settings_outlined,
+        title: '设置',
+        subtitle: '搜索引擎、无痕浏览等',
+        actions: [
+          menuTile(context, icon: Icons.settings_outlined, title: '浏览器设置',
+              onTap: () {
+            Navigator.pop(context);
+            widget.onOpenSettings?.call();
+          }),
+        ],
+      ),
     ]);
   }
 
@@ -1212,7 +1354,7 @@ class BrowserPageState extends State<BrowserPage> {
     final tokens = context.browserTokens;
     final visible = <int>[
       for (var i = 0; i < _tabs.length; i++)
-        if (!_privateTabsOnly || _tabs[i].private) i,
+        if (!_isBlank(_tabs[i]) && (!_privateTabsOnly || _tabs[i].private)) i,
     ];
     final scheme = Theme.of(context).colorScheme;
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -1226,93 +1368,26 @@ class BrowserPageState extends State<BrowserPage> {
         child: SafeArea(
           child: Column(
             children: [
-              _buildMobileTabStrip(tokens),
-              Container(
-                color: tokens.toolbarBackground,
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: '返回',
-                      onPressed: _closeTabOverview,
-                      icon: const Icon(Icons.arrow_back),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _privateTabsOnly ? '无痕标签页' : '标签页',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                          Text(
-                            '${visible.length} 个打开的标签',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
+              // Vivaldi 式总览头部：大标题 + 计数，右上角 X 关闭
+              _OverviewEntrance(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 10, 8, 2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _privateTabsOnly ? '无痕标签页' : '标签页（$_realTabCount）',
+                          style: const TextStyle(
+                              fontSize: 19, fontWeight: FontWeight.w800),
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: '新建标签页',
-                      onPressed: () {
-                        _addTab('', private: _privateTabsOnly);
-                        _closeTabOverview(returnToOrigin: false);
-                        _openAddressEditor();
-                      },
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
-                child: Row(
-                  children: [
-                    FilterChip(
-                      selected: !_privateTabsOnly,
-                      label: const Text('全部'),
-                      onSelected: (_) {
-                        if (_privateTabsOnly) {
-                          setState(() => _privateTabsOnly = false);
-                        }
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    FilterChip(
-                      selected: _privateTabsOnly,
-                      avatar:
-                          const Icon(Icons.visibility_off_outlined, size: 16),
-                      label: const Text('无痕'),
-                      onSelected: (_) {
-                        if (!_privateTabsOnly) {
-                          setState(() => _privateTabsOnly = true);
-                        }
-                      },
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: _tabs.length < 2
-                          ? null
-                          : () {
-                              final activeTab = _currentTab;
-                              setState(() {
-                                _tabs
-                                  ..clear()
-                                  ..add(activeTab);
-                                _active = 0;
-                              });
-                              _notifyTabCount();
-                            },
-                      child: const Text('关闭其他'),
-                    ),
-                  ],
+                      IconButton(
+                        tooltip: '完成',
+                        onPressed: _closeTabOverview,
+                        icon: const Icon(Icons.close, size: 24),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               Expanded(
@@ -1321,15 +1396,17 @@ class BrowserPageState extends State<BrowserPage> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.visibility_off_outlined,
+                            Icon(_privateTabsOnly
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.tab_outlined,
                                 size: 40, color: scheme.onSurfaceVariant),
                             const SizedBox(height: 12),
-                            const Text('还没有无痕标签页'),
+                            Text(_privateTabsOnly ? '还没有无痕标签页' : '暂无打开的标签页'),
                           ],
                         ),
                       )
                     : GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 2, 16, 18),
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
@@ -1355,20 +1432,141 @@ class BrowserPageState extends State<BrowserPage> {
                         },
                       ),
               ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        _addTab('', private: _privateTabsOnly);
-                        _closeTabOverview(returnToOrigin: false);
-                        _openAddressEditor();
-                      },
-                      icon: const Icon(Icons.add),
-                      label: const Text('新建标签页'),
+              // Vivaldi 式底部：中央悬浮 pill（计数/无痕筛选/关闭其他）+ 右侧 FAB 新建
+              _OverviewEntrance(
+                delay: const Duration(milliseconds: 60),
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                    child: SizedBox(
+                      height: 56,
+                      child: Stack(
+                        children: [
+                          Align(
+                            alignment: Alignment.center,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: tokens.toolbarBackground,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(color: tokens.divider),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x161E2846),
+                                    blurRadius: 14,
+                                    offset: Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              height: 52,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 10),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: Center(
+                                      child: Container(
+                                        width: 26,
+                                        height: 26,
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: scheme.onSurfaceVariant,
+                                            width: 1.8,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Text(
+                                          '$_realTabCount',
+                                          style: TextStyle(
+                                            color: scheme.onSurfaceVariant,
+                                            fontSize: 12.5,
+                                            height: 1,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: IconButton(
+                                      tooltip: '只看无痕',
+                                      onPressed: () => setState(() =>
+                                          _privateTabsOnly =
+                                              !_privateTabsOnly),
+                                      padding: EdgeInsets.zero,
+                                      icon: Icon(
+                                        Icons.visibility_off_outlined,
+                                        size: 22,
+                                        color: _privateTabsOnly
+                                            ? AppColors.brandStrong
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: IconButton(
+                                      tooltip: '关闭其他',
+                                      onPressed: _tabs.length < 2
+                                          ? null
+                                          : () {
+                                              final activeTab = _currentTab;
+                                              setState(() {
+                                                _tabs
+                                                  ..clear()
+                                                  ..add(activeTab);
+                                                _active = 0;
+                                              });
+                                              _notifyTabCount();
+                                            },
+                                      padding: EdgeInsets.zero,
+                                      icon: Icon(
+                                        Icons.delete_sweep_outlined,
+                                        size: 22,
+                                        color: _tabs.length < 2
+                                            ? scheme.onSurface
+                                                .withValues(alpha: .28)
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Material(
+                              color: AppColors.brand,
+                              borderRadius: BorderRadius.circular(999),
+                              elevation: 3,
+                              shadowColor: const Color(0x334353C4),
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: () {
+                                  // 新建标签 = 回「一览」主页（不产生空白标签页）
+                                  _closeTabOverview(returnToOrigin: false);
+                                  widget.onOpenBookmarks?.call();
+                                },
+                                child: const SizedBox(
+                                  width: 56,
+                                  height: 56,
+                                  child: Icon(Icons.add,
+                                      color: Colors.white, size: 26),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1405,12 +1603,13 @@ class BrowserPageState extends State<BrowserPage> {
   }
 
   Widget _tabCountButton() {
+    final count = _realTabCount;
     return BrowserToolbarButton(
       key: const ValueKey('tab-count-button'),
       tooltip: '标签页',
       icon: Icons.copy_outlined,
       onPressed: _showTabs,
-      badge: '${_tabs.length}',
+      badge: count == 0 ? null : '$count',
     );
   }
 
@@ -1433,19 +1632,19 @@ class BrowserPageState extends State<BrowserPage> {
   Widget _buildMobileTabStrip(BrowserDesignTokens tokens) {
     return BrowserTabStrip(
       scrollable: true,
-      onNewTab: () {
-        _addTab('', private: widget.model.settings.incognito);
-        _openAddressEditor();
-      },
+      // 新建标签不产生空白页：回到「一览」主页挑书签或输入网址。
+      onNewTab: () => widget.onOpenBookmarks?.call(),
       chips: [
         for (var i = 0; i < _tabs.length; i++)
-          BrowserTabChip(
-            label: _tabs[i].title,
-            selected: i == _active,
-            private: _tabs[i].private,
-            onTap: () => _selectTab(i),
-            onClose: _tabs.length > 1 ? () => _closeTab(i) : null,
-          ),
+          if (!_isBlank(_tabs[i]))
+            BrowserTabChip(
+              label: _tabs[i].title,
+              selected: i == _active,
+              private: _tabs[i].private,
+              faviconUrl: _tabs[i].faviconUrl,
+              onTap: () => _selectTab(i),
+              onClose: _tabs.length > 1 ? () => _closeTab(i) : null,
+            ),
       ],
     );
   }
@@ -1463,6 +1662,8 @@ class BrowserPageState extends State<BrowserPage> {
       onClose: _closeAddressEditor,
       private: tab.private,
       onReload: tab.controller == null ? null : _reload,
+      engineIndex:
+          widget.model.settings.searchEngineIndex.clamp(0, 3),
     );
   }
 
@@ -1501,12 +1702,16 @@ class BrowserPageState extends State<BrowserPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_showingTabs) return _buildTabOverview();
     final tab = _currentTab;
     final tokens = context.browserTokens;
     final desktop = MediaQuery.sizeOf(context).width >= 840;
     final topInset = MediaQuery.paddingOf(context).top;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
+    // While the address editor is open the keyboard must not cover it: lift
+    // the whole chrome above the keyboard, mirroring the old resize behavior
+    // but only for the editing state. Normal browsing never resizes.
+    final keyboardLift =
+        !desktop && _showingAddressEditor ? MediaQuery.viewInsetsOf(context).bottom : 0.0;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
         statusBarColor: _chromeColor,
@@ -1519,17 +1724,22 @@ class BrowserPageState extends State<BrowserPage> {
       ),
       child: ColoredBox(
         color: tokens.chromeBackground,
-        child: Column(
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            if (!desktop && topInset > 0)
-              SizedBox(
-                height: topInset,
-                child: ColoredBox(color: _chromeColor),
-              ),
-            Expanded(
-              child: Column(
-                children: [
-                  if (desktop) _buildDesktopTabStrip(tokens),
+            Column(
+              children: [
+                if (!desktop && topInset > 0)
+                  SizedBox(
+                    height: topInset,
+                    child: ColoredBox(color: _chromeColor),
+                  ),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: keyboardLift),
+                    child: Column(
+                      children: [
+                        if (desktop) _buildDesktopTabStrip(tokens),
                   if (desktop)
                     Container(
                       color: tokens.toolbarBackground,
@@ -1642,12 +1852,67 @@ class BrowserPageState extends State<BrowserPage> {
                         ),
                       ),
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ],
+            ],
+          ),
+          // 标签页概览作为覆盖层，内容树保持挂载以便随时补拍快照
+          if (_showingTabs) _buildTabOverview(),
+        ],
         ),
       ),
+    );
+  }
+}
+
+/// 总览唤起动画：上滑 + 淡入 + 轻缩放（菜单/浮层唤起的通用手感）。
+class _OverviewEntrance extends StatefulWidget {
+  const _OverviewEntrance({required this.child, this.delay = Duration.zero});
+
+  final Widget child;
+  final Duration delay;
+
+  @override
+  State<_OverviewEntrance> createState() => _OverviewEntranceState();
+}
+
+class _OverviewEntranceState extends State<_OverviewEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 320));
+  late final Animation<double> _a =
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+
+  @override
+  void initState() {
+    super.initState();
+    // 立即起播（测试环境不允许挂起 timer；错峰感用曲线近似即可）
+    _c.forward();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _a,
+      builder: (context, child) {
+        final t = _a.value;
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 24 * (1 - t)),
+            child: Transform.scale(scale: .94 + .06 * t, child: child),
+          ),
+        );
+      },
+      child: widget.child,
     );
   }
 }
@@ -1671,17 +1936,19 @@ class _TabPreviewCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.browserTokens;
     final borderColor = selected ? AppColors.brand : tokens.divider;
+    final borderWidth = selected ? 2.4 : 1.0;
+    final scheme = Theme.of(context).colorScheme;
     return Material(
       color: tokens.toolbarBackground,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: borderColor, width: 1),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor, width: borderWidth),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1689,46 +1956,47 @@ class _TabPreviewCard extends StatelessWidget {
               Expanded(
                 child: ClipRRect(
                   borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(16)),
+                      const BorderRadius.vertical(top: Radius.circular(20)),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      item.previewBytes == null
-                          ? _TabPreviewPlaceholder(
-                              item: item,
-                              location: location,
-                            )
-                          : Image.memory(
+                      item.previewBytes != null
+                          ? Image.memory(
                               item.previewBytes!,
                               fit: BoxFit.cover,
                               gaplessPlayback: true,
-                            ),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.black.withValues(alpha: .03),
-                              Colors.black.withValues(alpha: .18),
-                            ],
-                          ),
-                        ),
-                      ),
+                            )
+                          : (item.previewImageUrl != null
+                              ? Image.network(
+                                  item.previewImageUrl!,
+                                  fit: BoxFit.cover,
+                                  loadingBuilder: (_, child, progress) =>
+                                      progress == null
+                                          ? child
+                                          : ColoredBox(
+                                              color: scheme
+                                                  .surfaceContainerHighest
+                                                  .withValues(alpha: .5)),
+                                  errorBuilder: (_, __, ___) =>
+                                      _TabPreviewPlaceholder(
+                                          item: item, location: location),
+                                )
+                              : _TabPreviewPlaceholder(
+                                  item: item, location: location)),
                       Positioned(
-                        top: 6,
-                        right: 6,
+                        top: 4,
+                        right: 4,
                         child: IconButton(
                           tooltip: '关闭标签页',
                           onPressed: onClose,
                           style: IconButton.styleFrom(
-                            minimumSize: const Size(30, 30),
+                            minimumSize: const Size(24, 24),
                             padding: EdgeInsets.zero,
                             backgroundColor:
                                 Colors.black.withValues(alpha: .5),
                             foregroundColor: Colors.white,
                           ),
-                          icon: const Icon(Icons.close, size: 17),
+                          icon: const Icon(Icons.close, size: 14),
                         ),
                       ),
                       if (item.loading)
@@ -1741,12 +2009,25 @@ class _TabPreviewCard extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 8, 9),
+                padding: const EdgeInsets.fromLTRB(9, 7, 7, 8),
                 child: Row(
                   children: [
-                    BrowserBrandMark(
-                      letter: item.private ? 'P' : 'V',
-                      selected: selected,
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: item.faviconUrl != null
+                          ? Image.network(
+                              item.faviconUrl!,
+                              width: 22,
+                              height: 22,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => BrowserBrandMark(
+                                  letter: item.private ? 'P' : 'V',
+                                  selected: selected),
+                            )
+                          : BrowserBrandMark(
+                              letter: item.private ? 'P' : 'V',
+                              selected: selected,
+                            ),
                     ),
                     const SizedBox(width: 7),
                     Expanded(
@@ -1765,10 +2046,7 @@ class _TabPreviewCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 10,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant),
+                                fontSize: 10, color: scheme.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -1830,19 +2108,19 @@ class _TabPreviewPlaceholder extends StatelessWidget {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+              padding: const EdgeInsets.fromLTRB(10, 5, 10, 6),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 42,
-                    height: 42,
+                    width: 28,
+                    height: 28,
                     decoration: BoxDecoration(
                       color: item.private
                           ? privateColor.withValues(alpha: .18)
                           : AppColors.brand.withValues(alpha: .18),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
                       item.private
@@ -1850,27 +2128,27 @@ class _TabPreviewPlaceholder extends StatelessWidget {
                           : Icons.public,
                       color:
                           item.private ? privateColor : AppColors.brandStrong,
-                      size: 23,
+                      size: 16,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 7),
                   Text(
                     item.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 10,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  for (final width in [1.0, .82, .62])
+                  const SizedBox(height: 7),
+                  for (final width in [1.0, .72])
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.only(bottom: 4),
                       child: FractionallySizedBox(
                         widthFactor: width,
                         child: Container(
-                          height: 5,
+                          height: 4,
                           decoration: BoxDecoration(
                             color: tokens.divider.withValues(alpha: .72),
                             borderRadius: BorderRadius.circular(3),
@@ -1934,7 +2212,7 @@ class _NewTabView extends StatelessWidget {
                 Text(private ? '无痕浏览' : '新标签页',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                        fontSize: 24, fontWeight: FontWeight.w800)),
+                        fontSize: 18, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 10),
                 Text(private ? '关闭此标签页后，不保留本次浏览数据' : '使用上方地址栏开始浏览',
                     textAlign: TextAlign.center,

@@ -24,6 +24,16 @@ class DragInfo {
 
   int page;
   BookmarkEntity? lastDisplaced;
+
+  /// 当前悬停候选（重叠面积最大的格子实体）与其重叠比例。
+  /// 冻结合并只对"重叠足够大且指针静止停留"的候选生效。
+  BookmarkEntity? candidate;
+  double candidateRatio = 0;
+
+  /// iOS 挖孔插入位（展示序列中的下标，含末尾空位；-1 = 无孔）。
+  /// 拖拽期间其余格子按此让位重排，松手时拖拽项直接落进该格。
+  int insertIdx = -1;
+
   BookmarkEntity? hoverFolder;
   BookmarkEntity? mergeTarget;
   bool frozen = false;
@@ -89,16 +99,42 @@ class BoardModel extends ChangeNotifier {
   // ---------- 查找 ----------
 
   BookmarkEntity? findById(String id) {
-    for (final page in pages) {
-      for (final e in page) {
+    BookmarkEntity? scan(List<BookmarkEntity> list) {
+      for (final e in list) {
         if (e.id == id) return e;
         final f = e.asFolder;
         if (f != null) {
-          for (final c in f.children) {
-            if (c.id == id) return c;
-          }
+          final r = scan(f.children);
+          if (r != null) return r;
         }
       }
+      return null;
+    }
+
+    for (final page in pages) {
+      final r = scan(page);
+      if (r != null) return r;
+    }
+    return null;
+  }
+
+  /// 找到 id 所在的那一层列表（可能是某文件夹的 children）。
+  List<BookmarkEntity>? _listContaining(String id) {
+    List<BookmarkEntity>? scan(List<BookmarkEntity> list) {
+      for (final e in list) {
+        if (e.id == id) return list;
+        final f = e.asFolder;
+        if (f != null) {
+          final r = scan(f.children);
+          if (r != null) return r;
+        }
+      }
+      return null;
+    }
+
+    for (final page in pages) {
+      final r = scan(page);
+      if (r != null) return r;
     }
     return null;
   }
@@ -174,7 +210,57 @@ class BoardModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 停留 350ms：冻结重排，选定合并/吸入目标
+  /// 拖拽悬停判定（UI 层驱动），iOS 插入式语义：
+  /// - [slotIdx] = 挖孔插入位（几何格位）：拖拽期间其余格子按它让位重排，
+  ///   拖拽项松手后直接落进该格；
+  /// - [target]/[ratio] = 覆盖候选，供静止停留 650ms（freezeOnCandidate）
+  ///   触发合并 / 移入文件夹使用。
+  /// 拖拽过程不改动列表本身（渲染层按 insertIdx 让位展示）。
+  void dragOver(int page, int slotIdx, BookmarkEntity? target, double ratio) {
+    final d = drag;
+    if (d == null || d.frozen) return;
+    final sameSlot = d.page == page && d.insertIdx == slotIdx;
+    final sameTarget = identical(d.candidate, target) ||
+        (d.candidate?.id == target?.id);
+    final sameRatio = (d.candidateRatio - ratio).abs() < 0.02;
+    // 高频指针事件去重：无变化不 notify，避免整页重建风暴。
+    if (sameSlot && sameTarget && sameRatio) return;
+    d.page = page;
+    d.insertIdx = slotIdx;
+    // 排除自己与组员：拖过自己的原格不算候选
+    if (target != null &&
+        target.id != d.id &&
+        !d.group.any((g) => g.id == target.id)) {
+      d.candidate = target;
+      d.candidateRatio = ratio;
+    } else {
+      d.candidate = null;
+      d.candidateRatio = 0;
+    }
+    // 挖孔插入预览需要板面随 insertIdx 重建
+    notifyListeners();
+  }
+
+  /// 指针静止停留（页面层计时）后调用：只有当前候选重叠 ≥ 0.6（真正
+  /// 压在图标上，而非压在间隙/边缘）才冻结。
+  /// 冻结后：候选是文件夹 → 吸入（松手移入文件夹）；是条目 → 合并建夹。
+  void freezeOnCandidate() {
+    final d = drag;
+    if (d == null || d.frozen) return;
+    final c = d.candidate;
+    // 防自合并：候选是自己 → 不冻结（否则会建出含同一项两次的文件夹）
+    if (c == null || c.id == d.id || d.candidateRatio < 0.6) return;
+    final arr = pages[d.page];
+    if (!arr.contains(c) || d.group.any((g) => g.id == c.id)) return;
+    d.hoverFolder = c.isFolder ? c : null;
+    d.mergeTarget = c.isFolder ? null : c;
+    d.frozen = true;
+    // iOS：进入合并/吸入预览时挖孔收起，焦点让给合成预览
+    d.insertIdx = -1;
+    notifyListeners();
+  }
+
+  /// 停留 350ms：冻结重排，选定合并/吸入目标（旧路径，测试兼容）。
   /// 邻位优先文件夹（落在文件夹原位时它就在 idx±1），否则用被挤开的项
   void freezeDwell() {
     final d = drag;
@@ -210,10 +296,25 @@ class BoardModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 松手：合并 / 吸入 / 整块落位
-  void endDrag() {
+  /// 落夹成夹判定（iOS 习惯）：未冻结、压在某条目上（candidateRatio ≥ 0.6）
+  /// 就地成夹并弹开；只有落在间隙/边缘（ratio < 0.6）才按孔位插入。
+  /// 候选是文件夹时同样走吸入（与快掠吸入一致）。
+  bool get dropWillMerge {
     final d = drag;
-    if (d == null) return;
+    if (d == null || d.frozen) return false;
+    final c = d.candidate;
+    if (c == null || d.candidateRatio < 0.6) return false;
+    if (c.id == d.id || d.group.any((g) => g.id == c.id)) return false;
+    return pages[d.page].contains(c);
+  }
+
+  /// 松手：合并 / 吸入 / 整块落位。
+  /// 返回新建的合并夹或被吸入的文件夹（供调用方感知结果）；
+  /// UI 不再自动弹开——夹以磁贴形态留在板面（最终形态）。
+  /// 其余情况返回 null。
+  BookmarkFolder? endDrag() {
+    final d = drag;
+    if (d == null) return null;
     final arr = pages[d.page];
     // 翻页后旧目标作废
     if (d.hoverFolder != null && !arr.contains(d.hoverFolder)) {
@@ -223,49 +324,172 @@ class BoardModel extends ChangeNotifier {
       d.mergeTarget = null;
     }
 
+    // 快速掠过文件夹直接松手：当场吸入文件夹末尾并弹开（iOS 习惯）。
+    if (!d.frozen &&
+        d.candidate != null &&
+        d.candidate!.isFolder &&
+        d.candidateRatio >= 0.6) {
+      final f = findById(d.candidate!.id)?.asFolder;
+      if (f != null &&
+          arr.contains(f) &&
+          !d.all.any((e) => e.id == f.id)) {
+        _pullOut(arr, d.all);
+        f.children.addAll(d.all);
+        selection.removeAll(d.all.map((e) => e.id));
+        d.candidate = null;
+        d.candidateRatio = 0;
+        drag = null;
+        _autoDissolveFolders();
+        notifyListeners();
+        return findById(f.id)?.asFolder;
+      }
+    }
+
+    // 落夹成夹（iOS 习惯）：压在条目上松手（无论是否停留冻结）就地成夹
+    // 并弹开；只有落在间隙/边缘才按孔位插入。
+    if (dropWillMerge) {
+      return _mergeWith(d.candidate!);
+    }
+
     if (d.hoverFolder != null) {
-      _pullOut(arr, d.all);
-      d.hoverFolder!.asFolder!.children.addAll(d.all);
-      selection.removeAll(d.all.map((e) => e.id));
-      drag = null;
-      notifyListeners();
-      return;
+      final f = d.hoverFolder!;
+      // 防自吸入：目标文件夹就是拖拽项自己 → 作废
+      if (d.all.any((e) => e.id == f.id)) {
+        d.hoverFolder = null;
+      } else {
+        _pullOut(arr, d.all);
+        f.asFolder!.children.addAll(d.all);
+        selection.removeAll(d.all.map((e) => e.id));
+        drag = null;
+        _autoDissolveFolders();
+        notifyListeners();
+        // 解散后查无此夹则返回 null（调用方不弹开）。
+        return findById(f.id)?.asFolder;
+      }
     }
 
-    if (d.mergeTarget != null) {
-      final mt = d.mergeTarget!;
-      final mtIdx = arr.indexOf(mt);
-      if (mtIdx >= 0) arr.removeAt(mtIdx);
-      _pullOut(arr, d.all);
-      final folder =
-          BookmarkFolder(id: _nextId(), name: '新文件夹', children: [mt, ...d.all]);
-      arr.insert(mtIdx.clamp(0, arr.length), folder);
-      selection.removeAll(d.all.map((e) => e.id));
-      drag = null;
-      notifyListeners();
-      return;
+    if (d.mergeTarget != null && d.mergeTarget!.id != d.id) {
+      return _mergeWith(d.mergeTarget!);
     }
 
-    // 整块落位：以主项落点为基准，主项在前、组员按当前位置顺序
-    final base0 = arr.indexOf(d.entity);
-    final block = [
-      d.entity,
-      ...(d.group.toList()
-        ..sort((a, b) => arr.indexOf(a).compareTo(arr.indexOf(b)))),
-    ];
-    for (final e in block) {
-      final k = arr.indexOf(e);
-      if (k >= 0) arr.removeAt(k);
+    // iOS 插入式落位：insertIdx 已是"展示序列中的孔位"（UI 层已扣除
+    // 被抽走成员的偏移），直接按孔位插入，与挖孔预览完全一致。
+    // 冻结合并 / 吸入在上方分支已 return。
+    // insertIdx < 0（手指未产生有效移动）→ 原位落回。
+    final arr0 = pages[d.page];
+    final originIdx = arr0.indexOf(d.entity);
+    arr0.removeWhere((e) => d.all.any((x) => x.id == e.id));
+    final raw = d.insertIdx < 0 ? originIdx : d.insertIdx;
+    final base = raw.clamp(0, arr0.length);
+    arr0.insert(base, d.entity);
+    for (var i = 0; i < d.group.length; i++) {
+      arr0.insert(base + 1 + i, d.group[i]);
     }
-    final base = base0.clamp(0, arr.length);
-    arr.insertAll(base, block);
+    d.candidate = null;
+    d.candidateRatio = 0;
+    d.insertIdx = -1;
     selection.clear();
     drag = null;
     notifyListeners();
+    return null;
+  }
+
+  /// 与 [target] 条目合成新文件夹：children=[target, ...拖拽成员]，
+  /// 文件夹落在目标抽走拖拽成员后的压缩位（目标视觉位不动），
+  /// 拖拽结束（松手落定成夹）。
+  BookmarkFolder? _mergeWith(BookmarkEntity target) {
+    final d = drag;
+    if (d == null) return null;
+    final arr = pages[d.page];
+    if (target.id == d.id || d.group.any((g) => g.id == target.id)) {
+      return null;
+    }
+    if (!arr.contains(target)) return null;
+    final mtIdx = arr.indexOf(target);
+    // 文件夹应落在目标项的视觉位置：先数清 mtIdx 之前除拖拽成员外
+    // 还保留几项（抽走成员会让后续下标左移）
+    final keptBefore = arr
+        .take(mtIdx)
+        .where((e) => !d.all.any((x) => x.id == e.id))
+        .length;
+    arr.removeAt(mtIdx);
+    _pullOut(arr, d.all);
+    final folder = BookmarkFolder(
+        id: _nextId(), name: '新文件夹', children: [target, ...d.all]);
+    final folderId = folder.id;
+    arr.insert(keptBefore.clamp(0, arr.length), folder);
+    selection.removeAll(d.all.map((e) => e.id));
+    d.candidate = null;
+    d.candidateRatio = 0;
+    d.hoverFolder = null;
+    d.mergeTarget = null;
+    d.insertIdx = -1;
+    selection.clear();
+    drag = null;
+    _autoDissolveFolders();
+    notifyListeners();
+    return findById(folderId)?.asFolder;
   }
 
   void cancelDrag() {
     drag = null;
+    notifyListeners();
+  }
+
+  /// 文件夹内容少于 2 项时自动解散（iOS 习惯）：
+  /// 子项提回到文件夹所在位置，文件夹本身消失。含嵌套文件夹递归处理。
+  void _autoDissolveFolders() {
+    bool dissolve(List<BookmarkEntity> list) {
+      var did = false;
+      for (var i = list.length - 1; i >= 0; i--) {
+        final f = list[i].asFolder;
+        if (f == null) continue;
+        // 先处理嵌套层
+        if (dissolve(f.children)) did = true;
+        if (f.children.length < 2) {
+          list.removeAt(i);
+          list.insertAll(i.clamp(0, list.length), f.children);
+          did = true;
+        }
+      }
+      return did;
+    }
+
+    var changed = false;
+    for (final p in pages) {
+      if (dissolve(p)) changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
+  // ---------- 文件夹内拖拽（重排 / 拖出到上级） ----------
+
+  /// 文件夹内重排：把 [child] 移到当前列表的 [targetIdx] 位置（iOS 让位语义）。
+  void reorderInFolder(String folderId, BookmarkEntity child, int targetIdx) {
+    final f = findById(folderId)?.asFolder;
+    if (f == null) return;
+    final cur = f.children.indexWhere((e) => e.id == child.id);
+    if (cur < 0) return;
+    if (targetIdx < 0 || targetIdx >= f.children.length || cur == targetIdx) {
+      return;
+    }
+    f.children.removeAt(cur);
+    var t = targetIdx;
+    if (t > cur) t -= 1;
+    f.children.insert(t.clamp(0, f.children.length), child);
+    notifyListeners();
+  }
+
+  /// 把文件夹里的 [child] 拖出：落到文件夹所在层的下一个位置，并从文件夹移除。
+  void dragOutFromFolder(String folderId, BookmarkEntity child) {
+    final parent = _listContaining(folderId);
+    final f = findById(folderId)?.asFolder;
+    if (parent == null || f == null) return;
+    if (!f.children.remove(child)) return;
+    final fi = parent.indexWhere((e) => e.id == folderId);
+    parent.insert(
+        (fi < 0 ? parent.length : fi + 1).clamp(0, parent.length), child);
+    _autoDissolveFolders();
     notifyListeners();
   }
 
@@ -329,6 +553,7 @@ class BoardModel extends ChangeNotifier {
           if (ck >= 0) {
             f.children.removeAt(ck);
             selection.remove(id);
+            _autoDissolveFolders();
             notifyListeners();
             return;
           }
@@ -349,7 +574,9 @@ class BoardModel extends ChangeNotifier {
   }
 
   void createFolderFromSelection() {
-    if (selection.isEmpty) return;
+    // 单选不成夹：1 项文件夹会被自动解散规则立刻拆掉，
+    // 这里直接拒绝，保证建夹即有 ≥2 项。
+    if (selection.length < 2) return;
     var fp = 0, pos = 0;
     for (var p = 0; p < pages.length; p++) {
       final k = pages[p].indexWhere((e) => selection.contains(e.id));
@@ -374,6 +601,30 @@ class BoardModel extends ChangeNotifier {
       if (e != null) fn(e);
     }
     selection.clear();
+    notifyListeners();
+  }
+
+  /// 文件夹改名（BookmarkFolder.name 不可变，这里以新实例替换原位置）。
+  void renameFolder(String id, String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+
+    void replace(List<BookmarkEntity> arr) {
+      final k = arr.indexWhere((e) => e.id == id && e.isFolder);
+      if (k >= 0) {
+        final f = arr[k].asFolder!;
+        arr[k] = BookmarkFolder(id: f.id, name: trimmed, children: f.children);
+      } else {
+        for (final e in arr) {
+          final child = e.asFolder;
+          if (child != null) replace(child.children);
+        }
+      }
+    }
+
+    for (final page in pages) {
+      replace(page);
+    }
     notifyListeners();
   }
 
@@ -436,10 +687,41 @@ class BoardModel extends ChangeNotifier {
     if (loaded.isNotEmpty) pages = loaded;
     settings = Settings.fromJson(await _store.loadSettings());
     if (pages.isEmpty) pages = _seedData();
+    // 关键：把 id 计数器推进到所有已存在 id 之后。
+    // 否则重启后 _idc 从种子计数起步，新建文件夹会与 DB 里的旧 id 撞号，
+    // 导致同一页出现两个相同 key 的磁贴（Duplicate keys 红屏）。
+    _rebaseIdCounter();
+    // 自愈：清掉历史数据里遗留的空/单子文件夹（0项 空壳）
+    _autoDissolveFolders();
     notifyListeners();
   }
 
+  /// 扫描全树，取数字后缀最大值，把 [_idc] 推到其上。
+  void _rebaseIdCounter() {
+    final re = RegExp(r'(\d+)$');
+    var max = _idc;
+    void scan(List<BookmarkEntity> list) {
+      for (final e in list) {
+        final m = re.firstMatch(e.id);
+        if (m != null) {
+          final v = int.parse(m.group(1)!);
+          if (v >= max) max = v + 1;
+        }
+        final f = e.asFolder;
+        if (f != null) scan(f.children);
+      }
+    }
+
+    for (final p in pages) {
+      scan(p);
+    }
+    _idc = max;
+  }
+
   Future<void> save() async {
+    // 落库前先解散单子文件夹（<2 项拆回原位），否则单子夹会被持久化，
+    // 下次 load 才拆——用户看到的就是"没解开"。
+    _autoDissolveFolders();
     // 空页清理：只保留首页可为空
     while (pages.length > 1 && pages.last.isEmpty) {
       pages.removeLast();

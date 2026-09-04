@@ -63,6 +63,70 @@ void main() {
     });
   });
 
+  group('iOS 插入式拖拽（dragOver 挖孔语义）', () {
+    test('孔位落在某项之前（slot=该项展示位）→ 该项右移让位', () {
+      final m = _model(_p4());
+      m.startDrag('a');
+      // 偏边插入：重叠低（ratio<0.6），无合并意图
+      m.dragOver(0, 2, m.pages[0][2], 0.3); // 孔位 2 = c 之前
+      m.endDrag();
+      // a 抽走后展示序列 [b, c, d]，孔位 2 = d 之前 → b, c, a, d
+      expect(m.pages[0].map((e) => e.id).toList(), ['b', 'c', 'a', 'd']);
+    });
+
+    test('手指未产生有效移动 → 原位落回', () {
+      final m = _model(_p4());
+      m.startDrag('c');
+      m.endDrag();
+      expect(m.pages[0].map((e) => e.id).toList(), ['a', 'b', 'c', 'd']);
+    });
+
+    test('挖孔插入位跟随 dragOver 更新；冻结时收起', () {
+      final m = _model(_p4());
+      m.startDrag('a');
+      m.dragOver(0, 1, m.pages[0][1], 1.0);
+      expect(m.drag!.insertIdx, 1);
+      m.dragOver(0, 3, m.pages[0][3], 1.0);
+      expect(m.drag!.insertIdx, 3);
+      m.freezeOnCandidate();
+      expect(m.drag!.insertIdx, -1);
+      m.endDrag(); // 冻结合并优先
+      expect(m.pages[0].whereType<BookmarkFolder>().length, 1);
+    });
+
+    test('拖到末尾之后（slot = 长度）→ 追加到队尾', () {
+      final m = _model(_p4());
+      m.startDrag('a');
+      m.dragOver(0, 4, null, 0);
+      m.endDrag();
+      expect(m.pages[0].map((e) => e.id).toList(), ['b', 'c', 'd', 'a']);
+    });
+
+    test('重叠不足（压在间隙/边缘，ratio<0.6）→ 停留不冻结，松手按孔位插入', () {
+      final m = _model(_p4());
+      m.startDrag('a');
+      // UI 层已把静态格位换算成展示孔位：c 右半边 → 展示孔位 3 = d 之后
+      m.dragOver(0, 3, m.pages[0][2], 0.45);
+      m.freezeOnCandidate();
+      expect(m.drag!.frozen, isFalse, reason: '间隙停留不得触发合并');
+      m.endDrag();
+      // a 抽走后展示序列 [b, c, d]，插到 3 = 队尾
+      expect(m.pages[0].map((e) => e.id).toList(), ['b', 'c', 'd', 'a']);
+    });
+
+    test('落夹成夹（ratio>=0.6 即便未停留）→ 就地成夹并弹开', () {
+      final m = _model(_p4());
+      m.startDrag('a');
+      m.dragOver(0, 2, m.pages[0][2], 0.9);
+      expect(m.dropWillMerge, isTrue);
+      final folder = m.endDrag();
+      expect(folder, isNotNull);
+      expect(m.drag, isNull);
+      expect(m.pages[0].map((e) => e.id).toList(), ['b', folder!.id, 'd']);
+      expect(folder.children.map((e) => e.id).toList(), ['c', 'a']);
+    });
+  });
+
   group('合并与吸入', () {
     test('停留合并：拖到书签上 → 新文件夹(2项)', () {
       final m = _model(_p4());
@@ -171,6 +235,28 @@ void main() {
       expect(f.children.map((e) => e.id).toList(), ['a']);
       expect(m.pages[0].any((e) => e.id == 'a'), isFalse);
     });
+
+    test('文件夹改名：替换实例、嵌套可达、空名忽略', () {
+      final inner = BookmarkFolder(id: 'inner', name: '内层', children: []);
+      final outer =
+          BookmarkFolder(id: 'outer', name: '外层', children: [inner]);
+      final m = _model([
+        [_b('a', 'A'), outer],
+      ]);
+      m.renameFolder('outer', '  开发工具  ');
+      final renamed = m.pages[0][1].asFolder!;
+      expect(renamed.name, '开发工具');
+      expect(renamed.children.single.id, 'inner');
+      expect(identical(renamed, outer), isFalse);
+      // 嵌套层改名
+      m.renameFolder('inner', '内层改');
+      expect(
+          m.pages[0][1].asFolder!.children.single.asFolder!.name, '内层改');
+      // 空名忽略
+      m.renameFolder('inner', '   ');
+      expect(
+          m.pages[0][1].asFolder!.children.single.asFolder!.name, '内层改');
+    });
   });
 
   group('删除 / 收藏 / 序列化', () {
@@ -219,6 +305,56 @@ void main() {
       await m2.load();
       expect(m2.pages[0].map((e) => e.id).toList(),
           m.pages[0].map((e) => e.id).toList());
+    });
+  });
+
+  group('文件夹内拖拽', () {
+    BookmarkFolder folder() => BookmarkFolder(
+          id: 'f1',
+          name: '工具',
+          children: [_b('x', 'X'), _b('y', 'Y'), _b('z', 'Z')],
+        );
+
+    List<BookmarkPage> seedF(BookmarkFolder f) => [
+          [_b('a', 'A'), f],
+        ];
+
+    test('文件夹内重排：让位插入', () {
+      final f = folder();
+      final m = _model(seedF(f));
+      m.reorderInFolder('f1', f.children[2], 0);
+      final saved = m.pages[0][1].asFolder!;
+      expect(saved.children.map((e) => e.id).toList(), ['z', 'x', 'y']);
+    });
+
+    test('文件夹内重排：同位与越界索引安全', () {
+      final f = folder();
+      final m = _model(seedF(f));
+      m.reorderInFolder('f1', f.children[0], 0);
+      m.reorderInFolder('f1', f.children[0], 99);
+      final saved = m.pages[0][1].asFolder!;
+      expect(saved.children.map((e) => e.id).toList(), ['x', 'y', 'z']);
+    });
+
+    test('拖出到上级：紧跟文件夹之后', () {
+      final f = folder();
+      final m = _model(seedF(f));
+      final child = m.pages[0][1].asFolder!.children[1]; // Y
+      m.dragOutFromFolder('f1', child);
+      expect(m.pages[0].map((e) => e.id).toList(), ['a', 'f1', 'y']);
+      final saved = m.pages[0][1].asFolder!;
+      expect(saved.children.map((e) => e.id).toList(), ['x', 'z']);
+    });
+
+    test('拖出后持久化往返保留结构', () async {
+      final store = _FakeStore();
+      final m = BoardModel(store: store, seed: seedF(folder()));
+      m.dragOutFromFolder('f1', m.pages[0][1].asFolder!.children[0]);
+      await m.save();
+      final back = decodeBoard(store.pagesRaw!);
+      expect(back[0].map((e) => e.id).toList(), ['a', 'f1', 'x']);
+      expect(back[0][1].asFolder!.children.map((e) => e.id).toList(),
+          ['y', 'z']);
     });
   });
 }
