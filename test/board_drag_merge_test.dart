@@ -91,25 +91,25 @@ void main() {
       reason: '未停住时目标格不得后退',
     );
 
-    // 停住 650ms → 冻结合并：目标格外包白色磨砂外圈（不缩小）
+    // 停住 650ms → 冻结合并：目标图标原样（scale 1），托盘从原位外扩（1.25S）
     await tester.pump(const Duration(milliseconds: 700));
+    // 冻结时合并态才挂载，托盘动画（200ms）需再推进到终态
+    await tester.pump(const Duration(milliseconds: 250));
     expect(m.drag!.frozen, isTrue);
     expect(m.drag!.mergeTarget?.id, 'c');
     expect(
-      find.byWidgetPredicate((w) => w is AnimatedScale && w.scale == .9),
+      find.byWidgetPredicate(
+        (w) => w is Transform && (w.transform.storage[0] - 0.76).abs() < 0.02,
+      ),
       findsNothing,
-      reason: '合并悬停不得缩小目标格',
+      reason: '合并悬停目标图标不得缩小（原样不动）',
     );
     expect(
       find.byWidgetPredicate(
-        (w) =>
-            w is Container &&
-            w.decoration is BoxDecoration &&
-            (w.decoration! as BoxDecoration).color ==
-                Colors.white.withValues(alpha: .72),
+        (w) => w is Transform && (w.transform.storage[0] - 1.25).abs() < 0.01,
       ),
       findsOneWidget,
-      reason: '冻结后目标格外包白色磨砂外圈',
+      reason: '托盘从目标原位向外扩到 1.25S',
     );
 
     // 松手 → 合并成文件夹，以磁贴形态留在板面（最终形态，不弹开）

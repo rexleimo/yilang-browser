@@ -141,6 +141,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _swipeDxNotifier.value = 0;
     _dragPointerNotifier.value = null;
     _lastPos = null;
+  _freezePos = null;
     _folderStack.clear();
     _ctxMenu = null;
     _showingSearch = false;
@@ -238,6 +239,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _dragPointerNotifier.value = pos;
     _groupOffsets = _groupOffsetsFor(m.drag);
     _lastPos = null;
+  _freezePos = null;
     _lastSentSlot = -9999;
     _lastSentCand = null;
     _lastSentRatio = -1;
@@ -313,7 +315,8 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
       _cancelTimers();
       final d = m.drag!;
       // iOS 手感：幽灵从手指位置滑进落点格子。
-      // - 插入：滑进孔位；合并/吸入：无落位动画（直接成夹/入夹）。
+      // - 插入：滑进孔位；合并/吸入：幽灵「掉进抽屉」——飞向目标格并
+      //   缩到 0.45（托盘装进去的手感），落定后托盘收成文件夹磁贴。
       if (!d.frozen && _dragPointerNotifier.value != null) {
         if (!m.dropWillMerge && d.insertIdx >= 0) {
           final postLen = m.pages[d.page].length - d.all.length;
@@ -324,6 +327,19 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
             to: BoardMetrics.xy(base),
           );
         }
+      } else if (d.frozen && _dragPointerNotifier.value != null) {
+        final targetId = d.mergeTarget?.id ?? d.hoverFolder?.id;
+        final idx = targetId == null
+            ? -1
+            : m.pages[d.page].indexWhere((e) => e.id == targetId);
+        if (idx >= 0) {
+          _settle = _SettleAnim(
+            entity: d.entity,
+            from: _dragPointerNotifier.value! - _grabOffset,
+            to: BoardMetrics.xy(idx),
+            endScale: 0.45,
+          );
+        }
       }
       // 出环=确认，松手=落定：成夹/吸入只生成板面上的文件夹磁贴
       //（最终形态），不弹开任何面板。
@@ -332,6 +348,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
       _dragPointerNotifier.value = null;
       _groupOffsets = {};
       _lastPos = null;
+      _freezePos = null;
       _lastSentSlot = -9999;
       _lastSentCand = null;
       _lastSentRatio = -1;
@@ -370,6 +387,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _dragPointerNotifier.value = null;
     _groupOffsets = {};
     _lastPos = null;
+  _freezePos = null;
     _lastSentSlot = -9999;
     _lastSentCand = null;
     _lastSentRatio = -1;
@@ -429,11 +447,15 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     for (var i = 0; i < arr.length && i < slotStatic; i++) {
       if (d.all.any((x) => x.id == arr[i].id)) displaySlot--;
     }
-    // 先处理移动解冻：冻结中移动超 10px 即解冻，本次事件继续按解冻后发送，
-    // 否则孔位无法恢复。冻结中其余事件不发 dragOver（model 侧也是 no-op），
-    // 避免节流缓存被空转污染。
-    if (d.frozen && _lastPos != null && (_lastPos! - pos).distance > 10) {
+    // 先处理移动解冻：冻结后累计位移超 10px 即解冻。
+    // 阈值必须对比「冻结那一刻的位置」而不是上一次指针事件——
+    // 慢速拖动每次事件只挪 1~3px，用事件间距离永远达不到阈值，
+    // 会导致冻结卡死、位置不再计算（用户实测 bug）。
+    if (d.frozen &&
+        _freezePos != null &&
+        (_freezePos! - pos).distance > 10) {
       m.unfreeze();
+      _freezePos = null;
       _lastSentSlot = -9999;
       _lastSentCand = null;
       _lastSentRatio = -1;
@@ -446,14 +468,18 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
         bestRatio >= 0.6 ? true : (bestRatio < 0.5 ? false : _mergeHiding);
     final hideChanged = wantHide != _mergeHiding;
     final ratioDrift = (bestRatio - _lastSentRatio).abs() > 0.05;
+    // 压住候选（wantHide）时挖孔彻底不发：目标格从头到尾不被挤开，
+    // 进出合并预览零位移——否则收孔瞬间目标会从被挤开位跳/滑回原位
+    //（「离奇错位」的根因）。
+    final holeSlot = wantHide ? -1 : displaySlot;
     if (!d.frozen &&
-        (displaySlot != _lastSentSlot ||
+        (holeSlot != _lastSentSlot ||
             hideChanged ||
             (candId != _lastSentCand) ||
             ratioDrift ||
-            m.drag?.insertIdx != displaySlot)) {
-      m.dragOver(m.cur, displaySlot, bestEntity, bestRatio);
-      _lastSentSlot = displaySlot;
+            m.drag?.insertIdx != holeSlot)) {
+      m.dragOver(m.cur, holeSlot, bestEntity, bestRatio);
+      _lastSentSlot = holeSlot;
       _lastSentCand = candId;
       _lastSentRatio = bestRatio;
       _mergeHiding = wantHide;
@@ -467,6 +493,8 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _dwellTimer = Timer(const Duration(milliseconds: 650), () {
       if (m.drag == null) return;
       // 出环即确认（预览态）：按住期间不提前成夹，松手才落定成夹。
+      // 记录冻结那一刻的指针位置，供解冻做累计位移对比。
+      _freezePos = _lastPos;
       m.freezeOnCandidate();
     });
     _lastPos = pos;
@@ -488,6 +516,8 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
   }
 
   Offset? _lastPos;
+  /// 冻结那一刻的指针位置：解冻阈值按「距冻结点的累计位移」判定
+  Offset? _freezePos;
   // 拖拽节流缓存：只有孔位/候选/比率跨阈值变化才调 dragOver（发 notify）。
   int _lastSentSlot = -9999;
   String? _lastSentCand;
@@ -780,7 +810,10 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
   /// 条目越出面板边界：面板立收、文件夹不足两项会自动解散，
   /// 拖拽移交首页板继续跟手（iOS 手感）。
   void _handleFolderDragOut(BookmarkEntity child) {
-    final parent = _folderStack.last;
+    // 交接必须知道源文件夹：栈空（面板已被系统返回/重置收掉）且无
+    // 交接缓存时直接放弃本次拖出，避免 _folderStack.last 抛 StateError。
+    final parent = _folderStack.isNotEmpty ? _folderStack.last : _handoffFolder;
+    if (parent == null) return;
     m.dragOutFromFolder(parent.id, child);
     m.save();
     _handoffFolder = parent;
@@ -794,6 +827,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _lastSentRatio = -1;
     _mergeHiding = false;
     _lastPos = null;
+  _freezePos = null;
     setState(() {});
   }
 
@@ -821,6 +855,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _dragPointerNotifier.value = null;
     _groupOffsets = {};
     _lastPos = null;
+  _freezePos = null;
     _lastSentSlot = -9999;
     _lastSentCand = null;
     _lastSentRatio = -1;
@@ -968,6 +1003,26 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
                                           setState(
                                               () => _folderStack.clear());
                                           widget.onOpenUrl(item.url);
+                                        },
+                                        onReorder: (child, targetIdx) {
+                                          final parent = _folderStack.last;
+                                          m.reorderInFolder(
+                                              parent.id, child, targetIdx);
+                                          m.save();
+                                          // children 原地变更；换新实例触发面板刷新
+                                          setState(() {
+                                            for (var i = 0;
+                                                i < _folderStack.length;
+                                                i++) {
+                                              final nf = m
+                                                  .findById(
+                                                      _folderStack[i].id)
+                                                  ?.asFolder;
+                                              if (nf != null) {
+                                                _folderStack[i] = nf;
+                                              }
+                                            }
+                                          });
                                         },
                                         onDragOutItem: _handleFolderDragOut,
                                         onDragMoved: _handleFolderDragMoved,
@@ -1247,10 +1302,21 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
                             height: BoardMetrics.cellH,
                             child: child!,
                           ),
-                          child: _DragGhost(entity: s.entity),
+                          child: _DragGhost(
+                            entity: s.entity,
+                            endScale: s.endScale,
+                          ),
                         );
                       }
                       if (pointer == null) {
+                        return const SizedBox.shrink();
+                      }
+                      // 拖出交接期：拖影由文件夹 Draggable 的 feedback
+                      // （root Overlay，Offstage 隐藏不掉）继续跟手，
+                      // 板面 ghost 不再叠加，否则出现双重拖影——
+                      // 板面 ghost 还带板面坐标偏移，浮在手指上方，
+                      // 看起来像「目标缩小了一圈」。
+                      if (_folderDragHandoff) {
                         return const SizedBox.shrink();
                       }
                       return Stack(
@@ -1288,7 +1354,11 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
           for (var i = 0; i < page.length; i++)
             page[i].id == d.id || d.group.any((g) => g.id == page[i].id)
                 ? _originGap(page[i], i)
-                : _tileAt(page[i], i, p),
+                : _tileAt(page[i], i, p,
+                    // 合并确认目标不做让位滑动：出环瞬间原位钉住（用户要求
+                    // 目标位置零变动，环从外层附着）；邻格保持 180ms 滑动。
+                    snap: d.mergeTarget?.id == page[i].id ||
+                        d.hoverFolder?.id == page[i].id),
         ],
       );
     }
@@ -1349,10 +1419,13 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     );
   }
 
-  Widget _tileAt(BookmarkEntity e, int idx, int pageIdx) {
+  Widget _tileAt(BookmarkEntity e, int idx, int pageIdx,
+      {bool snap = false}) {
     final pos = BoardMetrics.xy(idx);
     final d = m.drag;
     final isDragMember = d != null && d.all.any((x) => x.id == e.id);
+    final isMergeTarget =
+        d?.mergeTarget?.id == e.id || d?.hoverFolder?.id == e.id;
     final body = Opacity(
       // 落位滑入动画期间隐藏落点磁贴，动画结束后显现（与幽灵无缝衔接）
       opacity: _settle?.entity.id == e.id ? 0 : 1,
@@ -1360,20 +1433,22 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
         entity: e,
         faded: isDragMember,
         // 只抖当前页：非可见页挂起的磁贴不跑动画（编辑态最多省 3/4 ticker 负载）
-        jiggling: m.editing && !isDragMember && pageIdx == m.cur,
+        // 抽屉不抖：合并确认目标关掉 jiggle（托盘钉死感）
+        jiggling:
+            m.editing && !isDragMember && pageIdx == m.cur && !isMergeTarget,
         jiggle: _jiggleCtrl,
         // iOS 参考：编辑态每个磁贴左上角显示减号徽章，点击弹确认删除。
         onDelete: m.editing ? () => _askDelete(e) : null,
-        // 出环确认目标（条目=合并 / 文件夹=吸入）：同一圈白色磨砂环，
-        // 松手才真正落定（成夹弹开 / 吸入弹开）。
-        merged: d?.mergeTarget?.id == e.id || d?.hoverFolder?.id == e.id,
+        // 合并/吸入确认：托盘 + 目标缩入（松手才真正落定）。
+        merged: isMergeTarget,
       ),
     );
     // 一路滑动让位（iOS 味）；节流保证只在孔位变化时重建，
     // Animated 不会被高频指针事件重启。
     return AnimatedPositioned(
       key: ValueKey('tile-${e.id}'),
-      duration: const Duration(milliseconds: 180),
+      // snap：合并确认目标原位钉住，不做让位滑动动画
+      duration: snap ? Duration.zero : const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
       left: pos.dx,
       top: pos.dy,
@@ -1467,11 +1542,15 @@ class _SettleAnim {
     required this.entity,
     required this.from,
     required this.to,
+    this.endScale,
   });
 
   final BookmarkEntity entity;
   final Offset from; // 幽灵当前左上角（手指位置）
   final Offset to; // 落点格子左上角
+
+  /// 幽灵终态缩放（null = 保持抬起尺寸）；合并掉入托盘时 0.45。
+  final double? endScale;
 }
 
 /// 上下文菜单项。
@@ -1553,15 +1632,21 @@ class _CtxMenuCard extends StatelessWidget {
 
 /// 拖拽中的磁贴（放大 + 投影）
 class _DragGhost extends StatelessWidget {
-  const _DragGhost({required this.entity});
+  const _DragGhost({required this.entity, this.endScale});
 
   final BookmarkEntity entity;
 
+  /// 松手落位终态缩放（null = 保持 1.22 抬起尺寸）；
+  /// 合并掉入托盘时由 _SettleAnim 传入 0.45。
+  final double? endScale;
+
   @override
   Widget build(BuildContext context) {
-    return Transform.scale(
-      // iOS 抬起手感：明显放大 + 深投影，盖住身下透明缝。
-      scale: 1.22,
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 1.22, end: endScale ?? 1.22),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      builder: (context, s, child) => Transform.scale(scale: s, child: child),
       child: Container(
         alignment: Alignment.center,
         decoration: BoxDecoration(

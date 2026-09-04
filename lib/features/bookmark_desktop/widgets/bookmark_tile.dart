@@ -150,40 +150,26 @@ class BookmarkTile extends StatelessWidget {
           : _itemContent(entity.asItem!),
     );
 
-    // iOS 参考（图二）：合并悬停原图标不动、不缩，外面扩一圈环
-    // （圆角矩形光环，200ms 从小放大弹出）；松手才真正生成文件夹。
-    // 图标布局尺寸不变，环溢出绘制（clip none）不占布局，邻格不位移。
+    // iOS 合并/吸入预览 = 「外扩描边环」模型：
+    // 目标图标完全原样（scale 1、无任何 Transform、位置尺寸零变动），
+    // 一圈空心描边环从图标边缘向外扩出（S → 1.25S，溢出绘制不占布局）。
+    // 环内部透明——不得用实心底板垫在图标后面，否则图标会被衬得
+    // 「装进更大的盒子」而显得缩了一圈（用户连续否决过两次）。
     final body = merged
         ? Stack(
             alignment: Alignment.center,
             clipBehavior: Clip.none,
             children: [
-              TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0.8, end: 1.0),
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                builder: (context, s, child) => Transform.scale(
-                  scale: s,
-                  child: child,
-                ),
-                child: Container(
-                  width: size + 10,
-                  height: size + 10,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .72),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                        color: const Color(0x33000000), width: 1),
-                    boxShadow: const [
-                      BoxShadow(
-                          color: Color(0x24141E3C),
-                          blurRadius: 12,
-                          offset: Offset(0, 4)),
-                    ],
-                  ),
-                ),
-              ),
               base,
+              // 描边环：以目标原位为中心向外扩，弹出时轻微 overshoot
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 1.0, end: 1.25),
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutBack,
+                builder: (context, s, child) =>
+                    Transform.scale(scale: s, child: child),
+                child: _MergeRing(size: size),
+              ),
             ],
           )
         : base;
@@ -271,15 +257,14 @@ class BookmarkTile extends StatelessWidget {
   }
 
   Widget _folderGrid(BookmarkFolder folder) {
+    // 迷你图标直接展示子项的真实 favicon（+ 首字母兜底），
+    // 让用户一眼看出文件夹里藏了哪些站点（而非无意义的色块）。
+    final mini = iconSize * 0.25;
     final minis = folder.children.take(9).map((c) {
       return Expanded(
-        child: Container(
-          margin: const EdgeInsets.all(1.5),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(6),
-            gradient: c.isFolder ? null : tileGradient(c.asItem!.url),
-            color: c.isFolder ? const Color(0x668A8F9C) : null,
-          ),
+        child: Padding(
+          padding: const EdgeInsets.all(1.5),
+          child: _MiniIcon(entity: c, size: mini),
         ),
       );
     }).toList();
@@ -299,6 +284,81 @@ class BookmarkTile extends StatelessWidget {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 文件夹预览里的单格迷你图标：白底圆角 + 站点 favicon（离线/失败时
+/// 露出底层首字母 + 渐变色）；子项是文件夹则画灰色小圆角块。
+class _MiniIcon extends StatelessWidget {
+  const _MiniIcon({required this.entity, required this.size});
+
+  final BookmarkEntity entity;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(size * 0.28);
+    if (entity.isFolder) {
+      return Container(
+        decoration: BoxDecoration(
+          color: const Color(0x668A8F9C),
+          borderRadius: radius,
+        ),
+      );
+    }
+    final item = entity.asItem!;
+    final host = BookmarkTile._uriOf(item.url)?.host;
+    return ClipRRect(
+      borderRadius: radius,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 首字母兜底层：favicon 加载中/失败时可见
+          Container(
+            color: Colors.white,
+            alignment: Alignment.center,
+            child: Text(
+              item.name.characters.first,
+              style: TextStyle(
+                fontSize: size * 0.62,
+                fontWeight: FontWeight.w700,
+                color: tileGradient(item.url).colors.last,
+              ),
+            ),
+          ),
+          if (host != null && host.isNotEmpty)
+            Positioned.fill(
+              child: _FaviconImage(host: host, iconSize: size),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 合并悬停描边环：空心（内部透明），白描边 + 投影，从图标边缘向外扩出。
+/// 不垫实心底板——实心底板会把原图标衬得缩小一圈（已两次被否决）。
+class _MergeRing extends StatelessWidget {
+  const _MergeRing({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = size * 0.28;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(r),
+        border: Border.all(
+            color: Colors.white.withValues(alpha: .9), width: 2),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x33141E3C), blurRadius: 12, offset: Offset(0, 4)),
         ],
       ),
     );
