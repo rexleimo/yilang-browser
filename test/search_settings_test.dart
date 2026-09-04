@@ -2,7 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yilan_browser/core/logic/search_engines.dart';
 import 'package:yilan_browser/core/logic/board_model.dart';
-import 'package:yilan_browser/features/browser/logic/ad_blocker.dart';
+import 'package:yilan_browser/features/browser/logic/ad_blocker.dart'
+    show isAdUrl, isBadUrl, isTrackerUrl, adBlockerScript;
 import 'package:yilan_browser/features/browser/services/browser_data_store.dart';
 
 void main() {
@@ -56,13 +57,37 @@ void main() {
   });
 
   group('AdBlocker', () {
-    test('blocks known ad and tracker hosts', () {
+    test('blocks known ad networks by domain suffix', () {
       expect(isAdUrl('https://pagead2.googlesyndication.com/pagead/x'),
           isTrue);
       expect(isAdUrl('https://www.doubleclick.net/x'), isTrue);
-      expect(isAdUrl('https://hm.baidu.com/hm.js?abc'), isTrue);
-      expect(isAdUrl('https://tags.cnzz.com/x.js'), isTrue);
-      expect(isAdUrl('https://c.amazon-adsystem.com/a'), isTrue);
+      expect(isAdUrl('https://tags.exoclick.com/x.js'), isTrue);
+      expect(isAdUrl('https://syndication.exosrv.com/x'), isTrue);
+      expect(isAdUrl('https://popads.net/x'), isTrue);
+      expect(isAdUrl('https://propellerads.com/x'), isTrue);
+      expect(isAdUrl('https://hilltopads.net/x'), isTrue);
+    });
+
+    test('blocks ad URLs by keyword pattern', () {
+      expect(isAdUrl('https://example.com/ads/banner.js'), isTrue);
+      expect(isAdUrl('https://cdn.example.com/adserver/x'), isTrue);
+      expect(isAdUrl('https://site.com/pagead/abc'), isTrue);
+      expect(isAdUrl('https://cdn.example.com/banners/promo.jpg'), isTrue);
+      expect(isAdUrl('https://x.com/popunder/1'), isTrue);
+      expect(isAdUrl('https://net/delivery/js/x.php'), isTrue);
+    });
+
+    test('trackers are classified separately from ads', () {
+      expect(isTrackerUrl('https://www.google-analytics.com/analytics.js'),
+          isTrue);
+      expect(isTrackerUrl('https://hm.baidu.com/hm.js?abc'), isTrue);
+      expect(isTrackerUrl('https://www.clarity.ms/s/x'), isTrue);
+      // 追踪器不是广告
+      expect(isAdUrl('https://www.google-analytics.com/analytics.js'),
+          isFalse);
+      // 两者都算 bad
+      expect(isBadUrl('https://tags.exoclick.com/x.js'), isTrue);
+      expect(isBadUrl('https://hm.baidu.com/hm.js?abc'), isTrue);
     });
 
     test('does not block normal hosts or subdomain lookalikes', () {
@@ -71,6 +96,9 @@ void main() {
       // 后缀必须是完整注册域：evil-googlesyndication.com 不等于子域
       expect(isAdUrl('https://evil-googlesyndication.com/x'), isFalse);
       expect(isAdUrl('https://baidu.com/s?wd=x'), isFalse);
+      // 关键词带边界：/adventure、/adobe 不应命中 /ads/、/advert
+      expect(isAdUrl('https://example.com/adventure/time'), isFalse);
+      expect(isAdUrl('https://example.com/adobe/download'), isFalse);
       expect(isAdUrl(''), isFalse);
     });
 
@@ -78,8 +106,11 @@ void main() {
       final js = adBlockerScript();
       expect(js, contains('__yilanAdBlock'));
       expect(js, contains('googlesyndication.com'));
+      expect(js, contains('exoclick.com'));
       expect(js, contains('MutationObserver'));
       expect(js, contains('window.open'));
+      expect(js, contains('sendBeacon'));
+      expect(js, contains('yilanAdBlock'));
     });
   });
 

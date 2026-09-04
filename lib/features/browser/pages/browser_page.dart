@@ -72,6 +72,7 @@ class _BrowserTab {
   /// clear [error] while it still matches this URL — otherwise our error card
   /// disappears and the raw English "Web page not available" page shows.
   String? errorUrl;
+  int blockedCount = 0; // 本页广告/追踪拦截计数（JS 引擎上报）
   String? previewImageUrl; // og:image / apple-touch-icon，封面兜底
   String? faviconUrl; // 站点小图标，显示在标签标题旁（浏览器 tab 习惯）
   WebViewController? controller;
@@ -359,6 +360,15 @@ class BrowserPageState extends State<BrowserPage> {
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(context.browserTokens.webViewBackground)
+      // 广告拦截计数上报（Brave Shields 式反馈）
+      ..addJavaScriptChannel('yilanAdBlock', onMessageReceived: (msg) {
+        final n = int.tryParse(msg.message) ?? 0;
+        if (!mounted || !_tabs.contains(tab)) return;
+        if (n > tab.blockedCount) {
+          tab.blockedCount = n;
+          if (_currentTab == tab) setState(() {});
+        }
+      })
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (value) {
           if (!mounted || !_tabs.contains(tab)) return;
@@ -367,6 +377,7 @@ class BrowserPageState extends State<BrowserPage> {
           tab.loading = true;
           tab.error = null;
           tab.errorUrl = null;
+          tab.blockedCount = 0;
           // 广告拦截：尽早注入规则脚本（含 MutationObserver 兜懒加载）
           if (widget.model.settings.adBlock && !isLocalCopy) {
             unawaited(controller
@@ -1415,7 +1426,18 @@ class BrowserPageState extends State<BrowserPage> {
   }
 
   void _showBrowserMenu() {
+    final blocked = _currentTab.blockedCount;
     showBrowserMenuSheet(context, categories: [
+      if (widget.model.settings.adBlock)
+        BrowserMenuCategory(
+          icon: Icons.shield_outlined,
+          title: '防护',
+          subtitle: '广告与追踪拦截（本页 $blocked 项）',
+          actions: [
+            menuTile(context, icon: Icons.shield_moon_outlined,
+                title: '已拦截 $blocked 项', onTap: () {}),
+          ],
+        ),
       BrowserMenuCategory(
         icon: Icons.build_outlined,
         title: '页面工具',
