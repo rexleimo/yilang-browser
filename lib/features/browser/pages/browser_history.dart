@@ -1,4 +1,4 @@
-import 'browser_data_store.dart';
+import '../services/browser_data_store.dart';
 
 /// Applies the browser history policy without requiring a WebView.
 class BrowserHistory {

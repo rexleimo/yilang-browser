@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'core/logic/board_model.dart';
-import 'core/storage/download_task_store.dart';
-import 'core/storage/favicon_service.dart';
-import 'core/storage/sqlite_bookmark_store.dart';
-import 'core/widgets/app_shell.dart';
-import 'features/bookmark_desktop/bookmark_desktop_page.dart';
-import 'features/browser/browser_page.dart';
-import 'features/downloads/download_controller.dart';
-import 'features/settings/settings_page.dart';
+import 'core/core.dart';
+import 'features/bookmark_desktop/bookmark_desktop.dart';
+import 'features/browser/browser.dart';
+import 'features/downloads/downloads.dart';
+import 'features/settings/settings.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {

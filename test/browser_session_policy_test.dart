@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:yilan_browser/features/browser/browser_session_policy.dart';
+import 'package:yilan_browser/features/browser/browser.dart';
 
 void main() {
   group('regular session policy', () {

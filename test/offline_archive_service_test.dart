@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:yilan_browser/features/browser/offline_archive_service.dart';
+import 'package:yilan_browser/features/browser/browser.dart';
 
 void main() {
   late HttpServer server;

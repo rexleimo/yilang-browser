@@ -11,19 +11,19 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../../core/logic/board_model.dart';
-import '../../theme/app_theme.dart';
-import '../downloads/download_center_page.dart';
-import '../downloads/download_controller.dart';
-import 'browser_data_store.dart';
-import '../../core/widgets/browser_chrome.dart';
+import '../../../core/logic/board_model.dart';
+import '../../../theme/app_theme.dart';
+import '../../downloads/download_center_page.dart';
+import '../../downloads/download_controller.dart';
+import '../services/browser_data_store.dart';
+import '../../../core/widgets/browser_chrome.dart';
 import 'browser_collections_page.dart';
-import 'browser_dialogs.dart';
+import '../widgets/browser_dialogs.dart';
 import 'browser_history.dart';
-import 'browser_javascript.dart';
-import 'browser_navigation.dart';
-import 'offline_archive_service.dart';
-import 'screenshot_service.dart';
+import '../logic/browser_javascript.dart';
+import '../logic/browser_navigation.dart';
+import '../services/offline_archive_service.dart';
+import '../services/screenshot_service.dart';
 
 /// Browser page with a normal new-tab flow, tabs, and private tabs.
 class BrowserPage extends StatefulWidget {

@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yilan_browser/features/browser/browser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yilan_browser/core/logic/board_model.dart';
 import 'package:yilan_browser/core/models/bookmark.dart';
 import 'package:yilan_browser/core/storage/bookmark_store.dart';
-import 'package:yilan_browser/features/browser/browser_data_store.dart';
-import 'package:yilan_browser/features/browser/browser_history.dart';
-import 'package:yilan_browser/features/browser/browser_navigation.dart';
-import 'package:yilan_browser/features/browser/browser_dialogs.dart';
-import 'package:yilan_browser/features/browser/browser_page.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class _MemoryStore implements BookmarkStore {

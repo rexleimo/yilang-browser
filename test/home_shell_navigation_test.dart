@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yilan_browser/core/logic/board_model.dart';
 import 'package:yilan_browser/core/models/bookmark.dart';
 import 'package:yilan_browser/core/storage/bookmark_store.dart';
-import 'package:yilan_browser/features/browser/browser_page.dart';
+import 'package:yilan_browser/features/browser/browser.dart';
 import 'package:yilan_browser/main.dart';
 
 class _MemoryStore implements BookmarkStore {

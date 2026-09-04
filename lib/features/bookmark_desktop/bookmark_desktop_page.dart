@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,9 +8,12 @@ import '../../core/metrics.dart';
 import '../../core/models/bookmark.dart';
 import '../../core/widgets/browser_chrome.dart';
 import '../../theme/app_theme.dart';
-import '../browser/browser_page.dart';
+import '../browser/browser.dart';
 import 'widgets/bookmark_tile.dart';
+import 'widgets/board_context_menu.dart';
+import 'widgets/board_drag_ghost.dart';
 import 'widgets/folder_page.dart';
+import 'widgets/home_settings_sheet.dart';
 
 /// 书签页：网格 / 翻页 / 长按拖动 / 停留合并 / 多选组拖 / 双指切换
 class BookmarkDesktopPage extends StatefulWidget {
@@ -92,7 +94,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
   final ValueNotifier<Offset?> _dragPointerNotifier = ValueNotifier(null);
 
   /// 松手落位动画：幽灵从手指位置滑进落点格子（240ms），期间落位磁贴隐藏。
-  _SettleAnim? _settle;
+  SettleAnim? _settle;
   Offset _grabOffset = Offset.zero; // 抓取点在磁贴内的偏移
   Map<String, Offset> _groupOffsets = {}; // 组成员相对主项偏移
 
@@ -321,7 +323,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
         if (!m.dropWillMerge && d.insertIdx >= 0) {
           final postLen = m.pages[d.page].length - d.all.length;
           final base = d.insertIdx.clamp(0, postLen);
-          _settle = _SettleAnim(
+          _settle = SettleAnim(
             entity: d.entity,
             from: _dragPointerNotifier.value! - _grabOffset,
             to: BoardMetrics.xy(base),
@@ -333,7 +335,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
             ? -1
             : m.pages[d.page].indexWhere((e) => e.id == targetId);
         if (idx >= 0) {
-          _settle = _SettleAnim(
+          _settle = SettleAnim(
             entity: d.entity,
             from: _dragPointerNotifier.value! - _grabOffset,
             to: BoardMetrics.xy(idx),
@@ -616,91 +618,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
   }
 
   void _openSettingsSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('浏览器设置',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 4),
-                const Text('P1 原型 · 设置项将在后续版本接入真实逻辑',
-                    style: TextStyle(fontSize: 12, color: AppColors.subText)),
-                const SizedBox(height: 10),
-                _SettingRow(
-                  label: '搜索引擎',
-                  trailing: TextButton(
-                    onPressed: () {
-                      m.settings.searchEngineIndex =
-                          (m.settings.searchEngineIndex + 1) %
-                              Settings.engines.length;
-                      m.save();
-                      setSheet(() {});
-                    },
-                    child: Text(
-                        '${Settings.engines[m.settings.searchEngineIndex]} ›',
-                        style: const TextStyle(color: AppColors.subText)),
-                  ),
-                ),
-                _SettingRow(
-                  label: '广告拦截',
-                  trailing: _Switch(
-                    value: m.settings.adBlock,
-                    onChanged: (v) {
-                      m.settings.adBlock = v;
-                      m.save();
-                      setSheet(() {});
-                    },
-                  ),
-                ),
-                _SettingRow(
-                  label: '无痕浏览',
-                  trailing: _Switch(
-                    value: m.settings.incognito,
-                    onChanged: (v) {
-                      m.settings.incognito = v;
-                      m.save();
-                      setSheet(() {});
-                    },
-                  ),
-                ),
-                _SettingRow(
-                  label: '书签云同步',
-                  trailing: _Switch(
-                    value: m.settings.sync,
-                    onChanged: (v) {
-                      m.settings.sync = v;
-                      m.save();
-                      setSheet(() {});
-                    },
-                  ),
-                ),
-                const _SettingRow(
-                    label: '关于一览 Yilan',
-                    trailing: Text('v0.1',
-                        style: TextStyle(color: AppColors.subText))),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: TextButton.styleFrom(
-                        backgroundColor: const Color(0xFFF0F2F7)),
-                    child: const Text('关闭'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+    showHomeSettingsSheet(context, m);
   }
 
   void _dismissTransientSurface() {
@@ -737,26 +655,26 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     final screen = MediaQuery.sizeOf(context);
     const menuW = 218.0;
     const rowH = 44.0;
-    final items = <_CtxMenuItem>[
+    final items = <CtxMenuItem>[
       if (!ctx.entity.isFolder)
-        _CtxMenuItem(Icons.open_in_new, '打开', Colors.white, () {
+        CtxMenuItem(Icons.open_in_new, '打开', Colors.white, () {
           final url = (ctx.entity.asItem!).url;
           _dismissCtxMenu();
           widget.onOpenUrl(url);
         }),
       if (ctx.entity.isFolder)
-        _CtxMenuItem(Icons.folder_open_outlined, '打开', Colors.white, () {
+        CtxMenuItem(Icons.folder_open_outlined, '打开', Colors.white, () {
           final f = ctx.entity.asFolder!;
           _dismissCtxMenu();
           _resetInteraction();
           setState(() => _folderStack.add(f));
         }),
-      _CtxMenuItem(Icons.edit_outlined, '编辑主屏幕', Colors.white, () {
+      CtxMenuItem(Icons.edit_outlined, '编辑主屏幕', Colors.white, () {
         _dismissCtxMenu();
         m.enterEdit();
         setState(() {});
       }),
-      _CtxMenuItem(Icons.delete_outline, '删除', const Color(0xFFFF453A), () {
+      CtxMenuItem(Icons.delete_outline, '删除', const Color(0xFFFF453A), () {
         _dismissCtxMenu();
         _askDelete(ctx.entity);
       }),
@@ -799,7 +717,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
               child: child,
             ),
           ),
-          child: _CtxMenuCard(items: items),
+          child: CtxMenuCard(items: items),
         ),
       ),
     ];
@@ -1302,7 +1220,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
                             height: BoardMetrics.cellH,
                             child: child!,
                           ),
-                          child: _DragGhost(
+                          child: BoardDragGhost(
                             entity: s.entity,
                             endScale: s.endScale,
                           ),
@@ -1468,7 +1386,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
         width: BoardMetrics.cellW,
         height: BoardMetrics.cellH,
         child:
-            _DragGhost(entity: d.entity),
+            BoardDragGhost(entity: d.entity),
       ),
       for (final g in d.group)
         Positioned(
@@ -1476,7 +1394,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
           top: topLeft.dy + (_groupOffsets[g.id]?.dy ?? 0),
           width: BoardMetrics.cellW,
           height: BoardMetrics.cellH,
-          child: _DragGhost(entity: g),
+          child: BoardDragGhost(entity: g),
         ),
     ];
     return widgets;
@@ -1536,166 +1454,3 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
   }
 }
 
-/// 松手落位动画数据。
-class _SettleAnim {
-  const _SettleAnim({
-    required this.entity,
-    required this.from,
-    required this.to,
-    this.endScale,
-  });
-
-  final BookmarkEntity entity;
-  final Offset from; // 幽灵当前左上角（手指位置）
-  final Offset to; // 落点格子左上角
-
-  /// 幽灵终态缩放（null = 保持抬起尺寸）；合并掉入托盘时 0.45。
-  final double? endScale;
-}
-
-/// 上下文菜单项。
-class _CtxMenuItem {
-  const _CtxMenuItem(this.icon, this.label, this.color, this.onTap);
-
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-}
-
-/// iOS 式深色磨砂上下文菜单卡片。
-class _CtxMenuCard extends StatelessWidget {
-  const _CtxMenuCard({required this.items});
-
-  final List<_CtxMenuItem> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      type: MaterialType.transparency,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xE6242426),
-              borderRadius: BorderRadius.circular(14),
-              border:
-                  Border.all(color: Colors.white.withValues(alpha: .08)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < items.length; i++) ...[
-                  if (i > 0)
-                    Container(
-                      height: 0.5,
-                      margin: const EdgeInsets.symmetric(horizontal: 15),
-                      color: Colors.white24,
-                    ),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: items[i].onTap,
-                    child: SizedBox(
-                      height: 44,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Row(
-                          children: [
-                            Icon(items[i].icon, size: 18, color: items[i].color),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                items[i].label,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
-                                  color: items[i].color,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 拖拽中的磁贴（放大 + 投影）
-class _DragGhost extends StatelessWidget {
-  const _DragGhost({required this.entity, this.endScale});
-
-  final BookmarkEntity entity;
-
-  /// 松手落位终态缩放（null = 保持 1.22 抬起尺寸）；
-  /// 合并掉入托盘时由 _SettleAnim 传入 0.45。
-  final double? endScale;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 1.22, end: endScale ?? 1.22),
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      builder: (context, s, child) => Transform.scale(scale: s, child: child),
-      child: Container(
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x66141E3C), blurRadius: 44, offset: Offset(0, 18))
-          ],
-        ),
-        child: BookmarkTile(entity: entity, compact: true),
-      ),
-    );
-  }
-}
-
-class _SettingRow extends StatelessWidget {
-  const _SettingRow({required this.label, required this.trailing});
-
-  final String label;
-  final Widget trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: const TextStyle(fontSize: 13.5, color: AppColors.ink)),
-          trailing,
-        ],
-      ),
-    );
-  }
-}
-
-class _Switch extends StatelessWidget {
-  const _Switch({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Switch(
-      value: value,
-      activeThumbColor: AppColors.success,
-      onChanged: onChanged,
-    );
-  }
-}

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/widgets/ui_kit.dart';
+import '../../../core/widgets/ui_kit.dart';
 
 /// Ephemeral dialogs owned by the browser feature.
 ///

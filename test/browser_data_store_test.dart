@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:yilan_browser/features/browser/browser_data_store.dart';
+import 'package:yilan_browser/features/browser/browser.dart';
 
 const _historyKey = 'yilan_browser_history_v1';
 const _readingKey = 'yilan_reading_list_v1';
