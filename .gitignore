@@ -48,3 +48,7 @@ app.*.map.json
 .widget_preview/
 
 android/build/
+
+# AIOS/ContextDB runtime artifacts
+.aios/
+.contextdb-enable
