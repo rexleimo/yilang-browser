@@ -224,6 +224,11 @@ jobs:
       - name: Rename IPA
         run: mv ios-out/*.ipa yilan-browser-${{ github.ref_name }}.ipa
 
+      # 固定名副本：官网「iOS · 爱思助手自签安装」按钮直链
+      # https://github.com/rexleimo/yilang-browser/releases/latest/download/yilan-browser-latest.ipa
+      - name: Fixed-name IPA for stable download link
+        run: cp yilan-browser-${{ github.ref_name }}.ipa yilan-browser-latest.ipa
+
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:

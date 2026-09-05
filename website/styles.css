@@ -888,3 +888,102 @@ a { color: inherit; text-decoration: none; }
 .btn-disabled:hover { box-shadow: none; transform: none; }
 .dl-link { color: var(--brand-bright); text-decoration: underline; text-underline-offset: 3px; }
 .dl-link:hover { color: #fff; }
+
+/* ---------------- iOS 自签指南 ---------------- */
+.ios-guide {
+  margin-top: 28px;
+  text-align: left;
+  background: rgba(0,0,0,0.28);
+  border-radius: var(--r-lg);
+  padding: 20px 24px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.ios-guide-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-bright);
+  margin-bottom: 12px;
+}
+.ios-guide-steps {
+  list-style: none;
+  counter-reset: guide;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ios-guide-steps li {
+  counter-increment: guide;
+  font-size: 13px;
+  color: var(--ink-muted);
+  padding-left: 30px;
+  position: relative;
+  line-height: 1.6;
+}
+.ios-guide-steps li::before {
+  content: counter(guide);
+  position: absolute;
+  left: 0; top: 2px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(67, 83, 196, 0.25);
+  color: var(--brand-bright);
+}
+.ios-guide-steps b { color: var(--ink); font-weight: 500; }
+.ios-guide-steps a { color: var(--brand-bright); text-decoration: underline; text-underline-offset: 3px; }
+.ios-guide-steps a:hover { color: #fff; }
+
+/* ---------------- 联系卡 ---------------- */
+.contact-section { padding-top: 0; }
+.contact-card {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 32px;
+  align-items: center;
+  background: var(--surface-1);
+  border-radius: var(--r-xxl);
+  padding: 40px 48px;
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+}
+.contact-item { display: flex; gap: 18px; align-items: flex-start; }
+.contact-ico {
+  flex: 0 0 46px;
+  width: 46px; height: 46px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #4353C4, #6a4cf5);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(67, 83, 196, 0.35);
+}
+.contact-copy h3 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.contact-value {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--brand-bright);
+  text-decoration: underline;
+  text-decoration-color: rgba(123, 135, 255, 0.4);
+  text-underline-offset: 4px;
+}
+.contact-value:hover { color: #fff; }
+.contact-hint { font-size: 12.5px; color: var(--ink-muted); margin-top: 5px; }
+.contact-divider { width: 1px; align-self: stretch; background: var(--hairline-soft); }
+
+@media (max-width: 810px) {
+  .contact-card { grid-template-columns: 1fr; gap: 28px; padding: 32px 24px; }
+  .contact-divider { width: 100%; height: 1px; }
+}
