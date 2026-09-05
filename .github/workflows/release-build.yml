@@ -34,40 +34,10 @@ jobs:
 
       - run: flutter pub get
 
-      # 正式签名（可选）：把 keystore 放进 Secrets 后自动启用。
-      #   ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD
-      #   ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
-      - name: Restore release keystore
-        id: keystore
-        env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Inject signing config
-        if: ${{ steps.keystore.outputs.configured == 'true' }}
-        env:
-          KS_PATH: ${{ runner.temp }}/release.keystore
-        run: |
-          cat >> android/key.properties <<EOF
-          storeFile=$KS_PATH
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          EOF
-
-      - name: Build APK (signed release)
-        if: ${{ steps.keystore.outputs.configured == 'true' }}
-        run: flutter build apk --release
-
-      # 未配置 keystore 时模板默认用 debug 密钥出包（可安装体验，勿上架）。
-      - name: Build APK (fallback)
-        if: ${{ steps.keystore.outputs.configured != 'true' }}
+      # 说明：正式签名 keystore 接入（key.properties + build.gradle 读取）
+      # 因 AGP 9 Kotlin DSL 兼容性问题暂缓；当前 APK 用 debug 密钥签名，
+      # 可安装体验。蒲公英分发 Android 包可直接上传。
+      - name: Build APK (release, debug-signed)
         run: flutter build apk --release
 
       - uses: actions/upload-artifact@v4
@@ -157,6 +127,17 @@ jobs:
       - name: Build IPA (unsigned fallback)
         if: ${{ steps.signing.outputs.ready != 'true' }}
         run: flutter build ipa --release --no-codesign
+
+      # --no-codesign 只产出 .xcarchive 不导出 .ipa：手工把 .app 打包成
+      # 未签名 ipa（仅验证编译产物形态；蒲公英分发需要签名 ipa，走上方
+      # 配置 Secrets 的签名路径）。
+      - name: Package unsigned IPA
+        if: ${{ steps.signing.outputs.ready != 'true' }}
+        run: |
+          mkdir -p build/ios/ipa/Payload
+          cp -r build/ios/archive/Runner.xcarchive/Products/Applications/*.app \
+            build/ios/ipa/Payload/Runner.app
+          cd build/ios/ipa && zip -qry ../app-unsigned.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
