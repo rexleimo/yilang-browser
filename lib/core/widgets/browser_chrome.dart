@@ -535,6 +535,7 @@ class BrowserOmnibox extends StatelessWidget {
     this.engineButtonKey,
     this.leadingSource,
     this.private = false,
+    this.insecure = false,
     this.onReload,
     this.engineIndex = 0,
   });
@@ -558,6 +559,9 @@ class BrowserOmnibox extends StatelessWidget {
   final Widget? leadingSource;
   final VoidCallback onClose;
   final bool private;
+
+  /// 明文 http 页面：不亮锁图标（锁只属于 https），改用地球标提示非安全。
+  final bool insecure;
   final VoidCallback? onReload;
 
   /// 当前搜索引擎序号（用于左侧品牌 logo）。
@@ -608,7 +612,7 @@ class BrowserOmnibox extends StatelessWidget {
                   Icon(
                     private
                         ? Icons.visibility_off_outlined
-                        : Icons.lock_outline,
+                        : (insecure ? Icons.language : Icons.lock_outline),
                     color: foreground.withValues(alpha: .72),
                     size: 18,
                   )

@@ -6,6 +6,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../models/bookmark.dart';
+import '../storage/bookmark_codec.dart';
 import '../storage/bookmark_store.dart';
 import 'search_engines.dart';
 
@@ -60,6 +61,15 @@ class Settings {
   bool suggestHistory = true;
   bool suggestTabs = true;
 
+  /// 输入时向搜索引擎拉取实时建议词。
+  bool suggestRemote = true;
+
+  /// 冷启动时恢复上次退出前的标签页集合。
+  bool restoreSession = true;
+
+  /// 全部标签页以桌面版 UA 请求网页。
+  bool desktopUA = false;
+
   static const List<String> engines = SearchEngines.names;
 
   Map<String, Object?> toJson() => {
@@ -74,6 +84,9 @@ class Settings {
         'sbm': suggestBookmarks,
         'shs': suggestHistory,
         'stb': suggestTabs,
+        'srm': suggestRemote,
+        'rse': restoreSession,
+        'dua': desktopUA,
       };
 
   factory Settings.fromJson(Map<String, Object?> j) => Settings()
@@ -87,7 +100,10 @@ class Settings {
     ..suggestRecent = (j['srs'] as bool?) ?? true
     ..suggestBookmarks = (j['sbm'] as bool?) ?? true
     ..suggestHistory = (j['shs'] as bool?) ?? true
-    ..suggestTabs = (j['stb'] as bool?) ?? true;
+    ..suggestTabs = (j['stb'] as bool?) ?? true
+    ..suggestRemote = (j['srm'] as bool?) ?? true
+    ..restoreSession = (j['rse'] as bool?) ?? true
+    ..desktopUA = (j['dua'] as bool?) ?? false;
 
   Settings({
     this.searchEngineIndex = 1,
@@ -101,6 +117,9 @@ class Settings {
     this.suggestBookmarks = true,
     this.suggestHistory = true,
     this.suggestTabs = true,
+    this.suggestRemote = true,
+    this.restoreSession = true,
+    this.desktopUA = false,
   });
 }
 
@@ -247,9 +266,14 @@ class BoardModel extends ChangeNotifier {
     final sameSlot = d.page == page && d.insertIdx == slotIdx;
     final sameTarget = identical(d.candidate, target) ||
         (d.candidate?.id == target?.id);
-    final sameRatio = (d.candidateRatio - ratio).abs() < 0.02;
-    // 高频指针事件去重：无变化不 notify，避免整页重建风暴。
-    if (sameSlot && sameTarget && sameRatio) return;
+    // 高频指针事件去重：槽位与候选都没变时，比率只服务停留冻结阈值
+    // （freezeOnCandidate / dropWillMerge 读 candidateRatio），不参与渲染
+    // → 静默更新不发 notify。慢速跨格时比率连续漂移，若每次都 notify
+    // 会触发整板重建风暴（UI 线程杀手）。
+    if (sameSlot && sameTarget) {
+      d.candidateRatio = ratio;
+      return;
+    }
     d.page = page;
     d.insertIdx = slotIdx;
     // 排除自己与组员：拖过自己的原格不算候选
@@ -695,6 +719,58 @@ class BoardModel extends ChangeNotifier {
     cur = 0;
     notifyListeners();
     await save();
+  }
+
+  /// 批量导入书签（HTML 导入用）：按 URL 去重，追加到第一个还有空位的页。
+  ///
+  /// 返回实际导入的条数；放不下的部分会被静默丢弃（页数有上限）。
+  Future<int> importBookmarks(List<ImportedBookmark> items) async {
+    if (items.isEmpty) return 0;
+    final existing = <String>{};
+    bool walk(List<BookmarkEntity> list) {
+      for (final e in list) {
+        final item = e.asItem;
+        if (item != null) {
+          existing.add(item.url);
+        } else {
+          walk(e.asFolder?.children ?? const []);
+        }
+      }
+      return true;
+    }
+
+    for (final page in pages) {
+      walk(page);
+    }
+    var imported = 0;
+    for (final entry in items) {
+      if (existing.contains(entry.url)) continue;
+      existing.add(entry.url);
+      final item = BookmarkItem(id: _nextId(), name: entry.name, url: entry.url);
+      _appendWithOverflow(item);
+      imported++;
+    }
+    if (imported > 0) {
+      notifyListeners();
+      await save();
+    }
+    return imported;
+  }
+
+  /// 把条目放进第一个未满的页；都满了就在上限内开新页。
+  void _appendWithOverflow(BookmarkItem item) {
+    for (var p = 0; p < pages.length; p++) {
+      if (pages[p].length < pageCapacity) {
+        pages[p].add(item);
+        return;
+      }
+    }
+    if (pages.length < maxPages) {
+      pages.add([item]);
+      return;
+    }
+    // 全满：塞进最后一页末尾（不挤掉已有条目）。
+    pages.last.add(item);
   }
 
   // ---------- 翻页 ----------

@@ -11,6 +11,10 @@ dependencies:
     sdk: flutter
   # 浏览内核：iOS=WKWebView / Android=WebView（系统内核，跨端一致）
   webview_flutter: ^4.8.0
+  # Android 专属内核 API：站点权限请求、桌面版宽视口等
+  webview_flutter_android: ^4.14.1
+  # 书签导入时选择 HTML 文件
+  file_picker: ^10.0.0
   # MVP 本地持久化（JSON），后续可换 drift/Hive
   shared_preferences: ^2.3.0
   # 系统分享面板与截图文件落盘
@@ -26,6 +30,11 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+
+dependency_overrides:
+  # file_picker 拉入的 2.0.35 用了 Gradle 9 已移除的 buildscript classpath 写法，
+  # 在本项目的 Gradle 9.3.1 下无法编译；钉在 Groovy 构建脚本的旧版本上。
+  flutter_plugin_android_lifecycle: 2.0.27
 
 flutter:
   uses-material-design: true

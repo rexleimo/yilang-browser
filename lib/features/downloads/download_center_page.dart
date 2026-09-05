@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/models/download_task.dart';
@@ -15,15 +17,25 @@ class DownloadCenterPage extends StatefulWidget {
 class _DownloadCenterPageState extends State<DownloadCenterPage> {
   final _search = TextEditingController();
   DownloadTaskStatus? _status;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     widget.controller.load();
+    // 下载进行中时周期性向系统下载管理器同步进度与状态。
+    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      final active = widget.controller.tasks.any((task) =>
+          task.status == DownloadTaskStatus.queued ||
+          task.status == DownloadTaskStatus.running ||
+          task.status == DownloadTaskStatus.paused);
+      if (active) widget.controller.refresh();
+    });
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _search.dispose();
     super.dispose();
   }

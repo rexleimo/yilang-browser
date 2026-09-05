@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -34,6 +35,7 @@ class ReadingItem {
     required this.url,
     required this.savedAt,
     this.excerpt = '',
+    this.readAt,
     this.offlineContentId,
     this.offlineHtmlPath,
     this.offlineResourcesPath,
@@ -44,16 +46,55 @@ class ReadingItem {
   final DateTime savedAt;
   final String excerpt;
 
+  /// 阅读完成时间；null 表示未读（稍后读队列的核心状态）。
+  final DateTime? readAt;
+
   /// Optional fields reserved for a later HTML/resource download implementation.
   final String? offlineContentId;
   final String? offlineHtmlPath;
   final String? offlineResourcesPath;
+
+  bool get isUnread => readAt == null;
+
+  bool get hasOfflineCopy =>
+      offlineHtmlPath != null && offlineHtmlPath!.isNotEmpty;
+
+  ReadingItem markRead(DateTime when) => ReadingItem(
+        title: title,
+        url: url,
+        savedAt: savedAt,
+        excerpt: excerpt,
+        readAt: when,
+        offlineContentId: offlineContentId,
+        offlineHtmlPath: offlineHtmlPath,
+        offlineResourcesPath: offlineResourcesPath,
+      );
+
+  ReadingItem markUnread() => ReadingItem(
+        title: title,
+        url: url,
+        savedAt: savedAt,
+        excerpt: excerpt,
+        offlineContentId: offlineContentId,
+        offlineHtmlPath: offlineHtmlPath,
+        offlineResourcesPath: offlineResourcesPath,
+      );
+
+  /// 摘掉离线副本引用（副本文件被清除后，条目退回联网打开）。
+  ReadingItem stripOfflineCopy() => ReadingItem(
+        title: title,
+        url: url,
+        savedAt: savedAt,
+        excerpt: excerpt,
+        readAt: readAt,
+      );
 
   Map<String, Object?> toJson() => {
         'title': title,
         'url': url,
         'savedAt': savedAt.toIso8601String(),
         'excerpt': excerpt,
+        if (readAt != null) 'readAt': readAt!.toIso8601String(),
         if (offlineContentId != null) 'offlineContentId': offlineContentId,
         if (offlineHtmlPath != null) 'offlineHtmlPath': offlineHtmlPath,
         if (offlineResourcesPath != null)
@@ -67,6 +108,7 @@ class ReadingItem {
           json['savedAt'] ?? json['saved_at'] ?? json['createdAt'],
         ),
         excerpt: _stringValue(json['excerpt'] ?? json['description']),
+        readAt: _nullableDate(json['readAt']),
         offlineContentId: _nullableString(json['offlineContentId']),
         offlineHtmlPath: _nullableString(
           json['offlineHtmlPath'] ?? json['localHtmlPath'],
@@ -142,8 +184,60 @@ class BrowserDataStore {
   static const _readingKey = 'yilan_reading_list_v1';
   static const _offlineKey = 'yilan_offline_content_v1';
   static const _recentSearchKey = 'yilan_recent_searches_v1';
+  static const _sessionKey = 'yilan_browser_session_v1';
   static const _maxHistoryItems = 500;
   static const _maxRecentSearches = 12;
+  static const _maxSessionTabs = 20;
+
+  // ---------- 标签页会话（退出恢复 / 最近关闭） ----------
+
+  /// 保存当前标签页集合（不含无痕标签页：无痕数据不落盘）。
+  Future<void> saveSession(
+      List<Map<String, Object?>> tabs, int activeIndex) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (tabs.isEmpty) {
+      await prefs.remove(_sessionKey);
+      return;
+    }
+    await prefs.setString(_sessionKey, jsonEncode({
+          'active': activeIndex.clamp(0, tabs.length - 1),
+          'savedAt': DateTime.now().toIso8601String(),
+          'tabs': tabs.take(_maxSessionTabs).toList(),
+        }));
+  }
+
+  Future<BrowserSession?> loadSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_sessionKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final value = jsonDecode(raw);
+      if (value is! Map) return null;
+      final tabs = <BrowserSessionTab>[];
+      final rawTabs = value['tabs'];
+      if (rawTabs is List) {
+        for (final item in rawTabs.whereType<Map>()) {
+          final url = _stringValue(item['url']);
+          if (url.isEmpty) continue;
+          tabs.add(BrowserSessionTab(
+            url: url,
+            title: _stringValue(item['title']),
+          ));
+        }
+      }
+      if (tabs.isEmpty) return null;
+      final active = ((value['active'] as num?)?.toInt() ?? 0)
+          .clamp(0, tabs.length - 1);
+      return BrowserSession(tabs: tabs, activeIndex: active);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_sessionKey);
+  }
 
   /// 近期搜索词：地址栏下拉的快速检索入口（最新在前，去重，上限 12 条）。
   Future<List<String>> loadRecentSearches() async {
@@ -369,6 +463,44 @@ class BrowserDataStore {
 
   Future<void> clearOfflineContent() => _clear(_offlineKey);
 
+  /// 把磁盘上已经不存在的离线副本从元数据与阅读清单里摘掉，
+  /// 避免点开时才发现悬空。返回清理掉的副本数。
+  Future<int> pruneMissingOfflineContent() async {
+    final metas = await loadOfflineContent();
+    var pruned = 0;
+    final aliveMetas = <OfflineContentMetadata>[];
+    for (final meta in metas) {
+      final exists =
+          meta.htmlPath.isNotEmpty && File(meta.htmlPath).existsSync();
+      if (!exists) pruned++;
+      if (exists) aliveMetas.add(meta);
+    }
+    if (pruned > 0) await saveOfflineContent(aliveMetas);
+
+    final items = await loadReadingList();
+    var stripped = 0;
+    final cleaned = <ReadingItem>[];
+    for (final item in items) {
+      final exists = !item.hasOfflineCopy ||
+          (item.offlineHtmlPath != null &&
+              File(item.offlineHtmlPath!).existsSync());
+      if (exists) {
+        cleaned.add(item);
+      } else {
+        stripped++;
+        cleaned.add(ReadingItem(
+          title: item.title,
+          url: item.url,
+          savedAt: item.savedAt,
+          excerpt: item.excerpt,
+          readAt: item.readAt,
+        ));
+      }
+    }
+    if (stripped > 0) await saveReadingList(cleaned);
+    return pruned;
+  }
+
   Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     await Future.wait([
@@ -494,3 +626,21 @@ DateTime? _nullableDate(Object? value) {
   if (value is num) return DateTime.fromMillisecondsSinceEpoch(value.toInt());
   return null;
 }
+
+/// 冷启动恢复用的标签页集合快照。
+class BrowserSession {
+  const BrowserSession({required this.tabs, required this.activeIndex});
+
+  final List<BrowserSessionTab> tabs;
+  final int activeIndex;
+}
+
+class BrowserSessionTab {
+  const BrowserSessionTab({required this.url, this.title = ''});
+
+  final String url;
+  final String title;
+}
+
+/// 「清除浏览数据」的范围（设置页与浏览器页共用）。
+enum BrowserDataScope { history, cookies, cache, recentSearches, offlineCopies }

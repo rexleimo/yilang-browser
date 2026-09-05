@@ -217,7 +217,16 @@ class _HomeShellState extends State<HomeShell> {
             },
             downloads: widget.downloads,
           ),
-          SettingsPage(model: widget.model, onBack: _handleSystemBack),
+          SettingsPage(
+            model: widget.model,
+            onBack: _handleSystemBack,
+            onClearBrowsingData: (scopes) async {
+              // IndexedStack 里 BrowserPage 随首帧构建，state 一般已就绪。
+              final browser = _browserKey.currentState;
+              if (browser == null) return const {};
+              return browser.clearBrowsingData(scopes);
+            },
+          ),
         ],
       ),
     );

@@ -12,6 +12,21 @@ import kotlin.math.min
 /** Native, viewport-sized capture used by an Android WebView host. */
 object WebViewCaptureBridge {
 
+    fun captureVisible(webView: WebView): String {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "WebView capture must run on the main thread"
+        }
+        require(webView.width > 0 && webView.height > 0) { "WebView is not laid out" }
+        val result = Bitmap.createBitmap(
+            webView.width, webView.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        webView.draw(canvas)
+        val output = ByteArrayOutputStream()
+        result.compress(Bitmap.CompressFormat.PNG, 100, output)
+        result.recycle()
+        return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+    }
+
     fun captureLong(webView: WebView, maxHeightPx: Int = 12000): String {
         check(Looper.myLooper() == Looper.getMainLooper()) {
             "WebView capture must run on the main thread"

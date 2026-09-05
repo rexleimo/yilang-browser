@@ -58,9 +58,25 @@ class _FolderPageState extends State<FolderPage> {
   bool _editingName = false;
   bool _hoverExit = false; // 拖拽悬停在标题拖出区
   bool _handedOff = false; // 拖出交接已触发（本次手势只触发一次）
+  final GlobalKey _panelBoxKey = GlobalKey();
   late final TextEditingController _nameCtrl =
       TextEditingController(text: widget.folder.name);
   final FocusNode _nameFocus = FocusNode();
+
+  /// 指针是否落在磨砂面板矩形内。
+  /// 背景 DragTarget 铺满全屏：悬停在自己原格上时格子 target 会拒绝
+  /// （data.id != child.id），_DragAvatar 继续向下找到背景 target →
+  /// 若不做矩形判定，面板内拖动扫过原格/格子间隙就会误触发拖出交接
+  /// （面板突然收起，条目飞出）——面板内重排因此基本不可用。
+  bool _pointerInsidePanel(Offset global) {
+    final box = _panelBoxKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || !box.attached) return false;
+    final local = box.globalToLocal(global);
+    return local.dx >= 0 &&
+        local.dy >= 0 &&
+        local.dx <= box.size.width &&
+        local.dy <= box.size.height;
+  }
 
   @override
   void didUpdateWidget(covariant FolderPage old) {
@@ -193,6 +209,7 @@ class _FolderPageState extends State<FolderPage> {
       // 吸收面板内部的点击，避免误触背景关闭
       onTap: () {},
       child: ClipRRect(
+        key: _panelBoxKey,
         borderRadius: BorderRadius.circular(18),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
@@ -324,6 +341,15 @@ class _FolderPageState extends State<FolderPage> {
               onWillAcceptWithDetails: (details) =>
                   canDrag && widget.onDragOutItem != null,
               onMove: (details) {
+                // 面板矩形内（含格子间隙、悬停被格子 target 拒绝的自己原格）
+                // 一律不交接：只有真正越过面板边界才触发拖出。
+                // 本页 dragAnchorStrategy = pointerDragAnchorStrategy，
+                // details.offset 即指针全局坐标。
+                final inside = _pointerInsidePanel(details.offset);
+                if (inside) {
+                  if (_hoverExit) setState(() => _hoverExit = false);
+                  return;
+                }
                 if (!_hoverExit) setState(() => _hoverExit = true);
                 // 越过面板边界的第一次移动即交接，避免等松手才结算
                 final dragOut = widget.onDragOutItem;
@@ -340,6 +366,9 @@ class _FolderPageState extends State<FolderPage> {
               },
               onAcceptWithDetails: (details) {
                 if (_handedOff) return; // 已交接，落位交给首页板处理
+                // 未交接的松手也可能落在背景 target 上（悬停格子被拒绝、
+                // 指针在格子间隙）：面板矩形内松手 = 取消/原位，不得拖出。
+                if (_pointerInsidePanel(details.offset)) return;
                 widget.onDragOutItem?.call(details.data);
               },
               builder: (context, candidates, _) => GestureDetector(

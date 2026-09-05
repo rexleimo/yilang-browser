@@ -37,16 +37,23 @@ class BoardDragGhost extends StatelessWidget {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
       builder: (context, s, child) => Transform.scale(scale: s, child: child),
-      child: Container(
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x66141E3C), blurRadius: 44, offset: Offset(0, 18))
-          ],
+      // RepaintBoundary 垫在 Transform 内：blurRadius 44 的投影只栅格化
+      // 一次，之后跟手移动（Positioned offset 变化）走合成器搬图层，
+      // 不再每帧重跑高斯模糊（拖拽时最大的 raster 热点）。
+      child: RepaintBoundary(
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x66141E3C),
+                  blurRadius: 44,
+                  offset: Offset(0, 18))
+            ],
+          ),
+          child: BookmarkTile(entity: entity, compact: true),
         ),
-        child: BookmarkTile(entity: entity, compact: true),
       ),
     );
   }

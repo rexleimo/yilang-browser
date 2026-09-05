@@ -10,9 +10,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../../../core/logic/board_model.dart';
 import '../../../core/logic/search_engines.dart';
+import '../../../core/logic/search_suggest.dart';
 import '../../../core/models/bookmark.dart';
 import '../../../theme/app_theme.dart';
 import '../../downloads/download_center_page.dart';
@@ -118,6 +120,25 @@ class BrowserPageState extends State<BrowserPage> {
   Color _chromeColor = Colors.black;
   final Set<_BrowserTab> _pendingCaptures = {};
 
+  /// 最近关闭的标签页（后进先出，供标签概览里一键恢复）。
+  final List<_BrowserTab> _recentlyClosed = [];
+  static const int _maxRecentlyClosed = 20;
+
+  /// 会话持久化的防抖计时器（标签页频繁变动时合并写盘）。
+  Timer? _sessionSaveTimer;
+
+  /// 联网搜索建议：输入防抖 + 最近一次结果。
+  Timer? _suggestDebounce;
+  List<String> _remoteSuggestions = const [];
+  String _remoteQuery = '';
+
+  /// 站点权限的会话内记忆（host + 资源类型 → 是否允许）。
+  final Map<String, bool> _permissionGrants = {};
+  bool _permissionDialogOpen = false;
+
+  /// 已应用到全部标签页的桌面版 UA 状态（设置变化时用于增量切换）。
+  bool _appliedDesktopUA = false;
+
   bool get hasWebPage =>
       _currentTab.controller != null && _currentTab.url.isNotEmpty;
 
@@ -179,11 +200,19 @@ class BrowserPageState extends State<BrowserPage> {
     ).normalize(raw);
   }
 
-  String get _userAgent => defaultTargetPlatform == TargetPlatform.android
-      ? 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 '
-          '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
-      : 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
-          '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+  String get _userAgent => _userAgentFor(widget.model.settings.desktopUA);
+
+  static String _userAgentFor(bool desktop) {
+    if (desktop) {
+      return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    }
+    return defaultTargetPlatform == TargetPlatform.android
+        ? 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+        : 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
+            '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+  }
 
   _BrowserTab get _currentTab => _tabs[_active];
   WebViewController? get _currentController => _currentTab.controller;
@@ -286,6 +315,8 @@ class BrowserPageState extends State<BrowserPage> {
   @override
   void initState() {
     super.initState();
+    _appliedDesktopUA = widget.model.settings.desktopUA;
+    widget.model.addListener(_onSettingsChanged);
     _addressFocus.addListener(() {
       if (_addressFocus.hasFocus && _address.text.isNotEmpty) {
         _address.selection =
@@ -295,9 +326,73 @@ class BrowserPageState extends State<BrowserPage> {
     final raw = widget.initialUrl.trim();
     _addTab(raw.isEmpty ? '' : _normalize(raw, privateTab: widget.model.settings.incognito),
         private: widget.model.settings.incognito, deferController: true);
+    if (raw.isEmpty) {
+      unawaited(_restoreSession());
+    }
     _loadBrowserData();
     _notifyTabCount();
     _runDemoScript();
+  }
+
+  /// 冷启动恢复上次退出前的标签页集合（不含无痕标签页）。
+  Future<void> _restoreSession() async {
+    if (!widget.model.settings.restoreSession) return;
+    final session = await _dataStore.loadSession();
+    if (!mounted || session == null) return;
+    // 占位标签页已无用：恢复会话时直接替换掉。
+    _tabs.removeWhere(_isBlank);
+    for (final entry in session.tabs) {
+      _addTab(entry.url, private: false);
+      if (entry.title.isNotEmpty) _tabs.last.title = entry.title;
+    }
+    if (_tabs.isEmpty) {
+      _addTab('', private: false);
+      return;
+    }
+    setState(() {
+      _active = session.activeIndex.clamp(0, _tabs.length - 1);
+      _address.text = _currentTab.url;
+    });
+    _notifyTabCount();
+  }
+
+  /// 标签集合或当前页变化后保存会话快照（防抖合并写入）。
+  void _scheduleSessionSave() {
+    _sessionSaveTimer?.cancel();
+    _sessionSaveTimer = Timer(const Duration(milliseconds: 800), () {
+      final tabs = [
+        for (final tab in _tabs)
+          if (!_isBlank(tab) && !tab.private)
+            {'url': tab.url, 'title': tab.title},
+      ];
+      _dataStore.saveSession(tabs, _active);
+    });
+  }
+
+  /// 设置里的开关变化（目前关注桌面版 UA）应用到所有标签页。
+  void _onSettingsChanged() {
+    if (!mounted) return;
+    final desktop = widget.model.settings.desktopUA;
+    if (desktop == _appliedDesktopUA) return;
+    _appliedDesktopUA = desktop;
+    final ua = _userAgentFor(desktop);
+    for (final tab in _tabs) {
+      final controller = tab.controller;
+      if (controller == null) continue;
+      unawaited(controller.setUserAgent(ua));
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          final android = controller.platform;
+          if (android is AndroidWebViewController) {
+            unawaited(android.setUseWideViewPort(desktop));
+          }
+        } catch (_) {}
+      }
+    }
+    final current = _currentController;
+    if (current != null && _currentTab.url.isNotEmpty) {
+      unawaited(current.reload());
+    }
   }
 
   Future<void> _loadBrowserData() async {
@@ -353,6 +448,7 @@ class BrowserPageState extends State<BrowserPage> {
     }
     if (mounted) setState(() {});
     _notifyTabCount();
+    _scheduleSessionSave();
   }
 
   WebViewController _createController(_BrowserTab tab) {
@@ -386,6 +482,7 @@ class BrowserPageState extends State<BrowserPage> {
           }
           // 占位标签页从此转正 → 同步给 Home 的标签条
           _notifyTabCount();
+          _scheduleSessionSave();
           if (_currentTab == tab) {
             setState(() {
               _chromeColor = Colors.black;
@@ -523,6 +620,7 @@ class BrowserPageState extends State<BrowserPage> {
           _captureTabPreview(tab);
           // 标题/转正状态可能变化 → 同步给 Home 的标签条
           _notifyTabCount();
+          _scheduleSessionSave();
           if (_currentTab == tab) setState(() {});
         },
         onNavigationRequest: (request) async {
@@ -544,31 +642,16 @@ class BrowserPageState extends State<BrowserPage> {
             return NavigationDecision.prevent;
           }
           if (_looksLikeDownload(request.url)) {
-            widget.downloads?.enqueue(request.url);
-            if (defaultTargetPlatform == TargetPlatform.android) {
-              try {
-                final id = await _androidBrowser.invokeMethod<int>(
-                  'enqueueDownload',
-                  <String, Object?>{
-                    'url': request.url,
-                    'userAgent': _userAgent,
-                  },
-                );
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('已加入下载：${id ?? ''}')),
-                  );
-                }
-                return NavigationDecision.prevent;
-              } on PlatformException catch (error) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text('下载失败：${error.message ?? error.code}')),
-                  );
-                }
-                return NavigationDecision.prevent;
+            // 统一走下载中心：记录任务 + Android 托管给系统下载管理器。
+            // （旧实现在这里又直接 invokeMethod 入队一次，导致系统收到两个任务。）
+            if (widget.downloads != null &&
+                defaultTargetPlatform == TargetPlatform.android) {
+              unawaited(widget.downloads!.enqueue(request.url));
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('已加入下载，可在下载中心查看进度')));
               }
+              return NavigationDecision.prevent;
             }
             final uri = Uri.tryParse(request.url);
             if (uri != null && await canLaunchUrl(uri)) {
@@ -590,7 +673,154 @@ class BrowserPageState extends State<BrowserPage> {
           if (_currentTab == tab) setState(() {});
         },
       ));
+    _configureAndroidController(controller);
     return controller;
+  }
+
+  /// Android 专属配置：站点权限对话框、地理授权、媒体自动播放、桌面宽视口。
+  /// iOS 侧 WKWebView 的权限决策插件未暴露，维持系统默认行为。
+  void _configureAndroidController(WebViewController controller) {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final android = controller.platform;
+      if (android is! AndroidWebViewController) return;
+      android
+        ..setOnPlatformPermissionRequest(_handlePermissionRequest)
+        ..setGeolocationPermissionsPromptCallbacks(
+          onShowPrompt: _handleGeolocationPrompt,
+        )
+        ..setGeolocationEnabled(true)
+        ..setMediaPlaybackRequiresUserGesture(false);
+      if (_appliedDesktopUA) {
+        unawaited(android.setUseWideViewPort(true));
+      }
+    } catch (_) {
+      // 平台实现不可用时退回默认行为。
+    }
+  }
+
+  Future<void> _handlePermissionRequest(
+      PlatformWebViewPermissionRequest request) async {
+    final host = Uri.tryParse(_currentTab.url)?.host ?? '';
+    final types = request.types;
+    if (types.isEmpty) {
+      await request.deny();
+      return;
+    }
+    final key = '$host|${types.map((t) => t.name).join(',')}';
+    final cached = _permissionGrants[key];
+    if (cached != null) {
+      if (cached) {
+        await _ensureRuntimePermissions(types);
+        await request.grant();
+      } else {
+        await request.deny();
+      }
+      return;
+    }
+    final allowed =
+        await _askSitePermission(host, _describePermissionTypes(types));
+    _permissionGrants[key] = allowed;
+    if (allowed) {
+      await _ensureRuntimePermissions(types);
+      await request.grant();
+    } else {
+      await request.deny();
+    }
+  }
+
+  Future<GeolocationPermissionsResponse> _handleGeolocationPrompt(
+      GeolocationPermissionsRequestParams request) async {
+    final host = Uri.tryParse(request.origin)?.host ??
+        request.origin.replaceFirst(RegExp(r'^https?://'), '');
+    final key = '$host|geolocation';
+    final cached = _permissionGrants[key];
+    if (cached == true) {
+      await _ensureLocationRuntimePermission();
+      return const GeolocationPermissionsResponse(allow: true, retain: true);
+    }
+    final allowed = await _askSitePermission(host, const ['位置信息']);
+    _permissionGrants[key] = allowed;
+    if (allowed) {
+      await _ensureLocationRuntimePermission();
+    }
+    return GeolocationPermissionsResponse(allow: allowed, retain: allowed);
+  }
+
+  Future<void> _ensureLocationRuntimePermission() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _androidBrowser
+          .invokeMapMethod<Object?, Object?>('requestAppPermissions', {
+        'permissions': <String>[
+          'android.permission.ACCESS_COARSE_LOCATION',
+          'android.permission.ACCESS_FINE_LOCATION',
+        ],
+      });
+    } catch (_) {}
+  }
+
+  List<String> _describePermissionTypes(
+      Set<WebViewPermissionResourceType> types) {
+    return [
+      for (final type in types)
+        switch (type.name) {
+          'camera' => '相机',
+          'microphone' => '麦克风',
+          'protectedMediaId' => '受保护的媒体标识',
+          'midiSysex' => 'MIDI 设备',
+          _ => type.name,
+        }
+    ];
+  }
+
+  /// 网页权限落实前，确保 App 自身持有对应的系统运行时权限
+  /// （WebView 的 grant 在 App 未授权时会被系统静默拒绝）。
+  Future<void> _ensureRuntimePermissions(
+      Set<WebViewPermissionResourceType> types) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    const manifestPermissions = {
+      'camera': 'android.permission.CAMERA',
+      'microphone': 'android.permission.RECORD_AUDIO',
+    };
+    final permissions = [
+      for (final type in types)
+        if (manifestPermissions[type.name] != null)
+          manifestPermissions[type.name]!,
+    ];
+    if (permissions.isEmpty) return;
+    try {
+      final result = await _androidBrowser
+          .invokeMapMethod<Object?, Object?>('requestAppPermissions', {
+        'permissions': permissions,
+      });
+      // 授权失败也不回滚网页授权：系统 WebView 侧仍会兜底校验。
+      if (result == null) return;
+    } catch (_) {}
+  }
+
+  Future<bool> _askSitePermission(String host, List<String> resources) async {
+    if (!mounted || host.isEmpty) return false;
+    if (_permissionDialogOpen) return false;
+    _permissionDialogOpen = true;
+    final allowed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text('「$host」请求权限'),
+        content: Text('该网站想使用：${resources.join('、')}'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('拒绝')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('允许')),
+        ],
+      ),
+    );
+    _permissionDialogOpen = false;
+    return allowed == true;
   }
 
   void _attachController(_BrowserTab tab) {
@@ -688,6 +918,69 @@ class BrowserPageState extends State<BrowserPage> {
     _dataStore.saveHistory(_history);
   }
 
+  /// 集中清除浏览数据（设置页「清除浏览数据」入口）。
+  /// 返回各范围清理的条数，供完成提示使用。
+  Future<Map<BrowserDataScope, int>> clearBrowsingData(
+      Set<BrowserDataScope> scopes) async {
+    final cleared = <BrowserDataScope, int>{};
+    if (scopes.contains(BrowserDataScope.history)) {
+      cleared[BrowserDataScope.history] = _history.length;
+      _history.clear();
+      await _dataStore.saveHistory(_history);
+    }
+    if (scopes.contains(BrowserDataScope.recentSearches)) {
+      cleared[BrowserDataScope.recentSearches] = _recentSearches.length;
+      await _dataStore.clearRecentSearches();
+      if (mounted) setState(() => _recentSearches = const []);
+    }
+    if (scopes.contains(BrowserDataScope.cookies)) {
+      try {
+        await WebViewCookieManager().clearCookies();
+        cleared[BrowserDataScope.cookies] = 1;
+      } catch (_) {
+        cleared[BrowserDataScope.cookies] = 0;
+      }
+    }
+    if (scopes.contains(BrowserDataScope.cache)) {
+      var clearedTabs = 0;
+      for (final tab in List<_BrowserTab>.from(_tabs)) {
+        final controller = tab.controller;
+        if (controller == null) continue;
+        try {
+          await controller.clearCache();
+          await controller.clearLocalStorage();
+          clearedTabs++;
+        } catch (_) {}
+      }
+      cleared[BrowserDataScope.cache] = clearedTabs;
+    }
+    if (scopes.contains(BrowserDataScope.offlineCopies)) {
+      final metas = await _dataStore.loadOfflineContent();
+      for (final meta in metas) {
+        try {
+          final target = meta.resourcesPath.isNotEmpty
+              ? meta.resourcesPath
+              : meta.htmlPath;
+          if (target.isEmpty) continue;
+          final dir = Directory(target);
+          if (dir.existsSync()) dir.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+      await _dataStore.clearOfflineContent();
+      if (mounted) {
+        setState(() {
+          for (var i = 0; i < _readingList.length; i++) {
+            if (_readingList[i].hasOfflineCopy) {
+              _readingList[i] = _readingList[i].stripOfflineCopy();
+            }
+          }
+        });
+      }
+      cleared[BrowserDataScope.offlineCopies] = metas.length;
+    }
+    return cleared;
+  }
+
   Future<bool> handleBack() async {
     if (_showingAddressEditor) {
       _closeAddressEditor();
@@ -738,6 +1031,7 @@ class BrowserPageState extends State<BrowserPage> {
   Future<void> _closeTab(int index) async {
     if (index < 0 || index >= _tabs.length) return;
     final tab = _tabs[index];
+    _rememberClosedTab(tab);
     if (tab.private && tab.controller != null) {
       await tab.controller!.clearCache();
       await tab.controller!.clearLocalStorage();
@@ -765,7 +1059,52 @@ class BrowserPageState extends State<BrowserPage> {
       backToHome = _tabs.every(_isBlank);
     }
     _notifyTabCount();
+    _scheduleSessionSave();
     if (backToHome) widget.onOpenBookmarks?.call();
+  }
+
+  /// 关闭普通标签页时记一份快照，供「恢复关闭的标签页」使用。
+  void _rememberClosedTab(_BrowserTab tab) {
+    if (tab.private || tab.url.isEmpty) return;
+    _recentlyClosed.removeWhere((item) => item.url == tab.url);
+    final snapshot = _BrowserTab(url: tab.url, private: false)
+      ..title = tab.title;
+    _recentlyClosed.add(snapshot);
+    while (_recentlyClosed.length > _maxRecentlyClosed) {
+      _recentlyClosed.removeAt(0);
+    }
+  }
+
+  /// 一键恢复最近关闭的标签页（标签概览底部的撤销按钮）。
+  void _restoreRecentlyClosed() {
+    while (_recentlyClosed.isNotEmpty) {
+      final entry = _recentlyClosed.removeLast();
+      final existing = _tabs.indexWhere((tab) => tab.url == entry.url);
+      if (existing >= 0) {
+        _selectTab(existing);
+        return;
+      }
+      _addTab(entry.url, private: false);
+      return;
+    }
+  }
+
+  /// 只保留当前标签页，其余全部关闭（记入最近关闭，可撤销）。
+  void _closeOtherTabs() {
+    if (_tabs.length < 2) return;
+    final activeTab = _currentTab;
+    for (final tab in List<_BrowserTab>.from(_tabs)) {
+      if (identical(tab, activeTab)) continue;
+      _rememberClosedTab(tab);
+    }
+    setState(() {
+      _tabs
+        ..clear()
+        ..add(activeTab);
+      _active = 0;
+    });
+    _notifyTabCount();
+    _scheduleSessionSave();
   }
 
   void _selectTab(int index) {
@@ -776,6 +1115,7 @@ class BrowserPageState extends State<BrowserPage> {
       _showingAddressEditor = false;
       _showingTabs = false;
     });
+    _scheduleSessionSave();
   }
 
   /// Called by Home so its tab button opens the existing tab overview.
@@ -892,6 +1232,37 @@ class BrowserPageState extends State<BrowserPage> {
     _address.text = url;
     unawaited(_recordRecent(q));
     _go(url);
+  }
+
+  /// 地址栏输入变化：刷新本地建议并防抖拉取联网建议词。
+  void _onAddressChanged(String value) {
+    setState(() {});
+    final s = widget.model.settings;
+    final q = value.trim();
+    if (!s.suggestRemote || _currentTab.private || q.isEmpty) {
+      _suggestDebounce?.cancel();
+      _remoteSuggestions = const [];
+      _remoteQuery = '';
+      return;
+    }
+    // 看起来像网址的输入不拉建议词。
+    final looksLikeUrl = q.contains('://') ||
+        q.contains('.') ||
+        q.startsWith('localhost');
+    if (looksLikeUrl) {
+      _suggestDebounce?.cancel();
+      _remoteSuggestions = const [];
+      _remoteQuery = '';
+      return;
+    }
+    _remoteQuery = q;
+    _suggestDebounce?.cancel();
+    _suggestDebounce = Timer(const Duration(milliseconds: 180), () async {
+      final engine = _defaultEngineIndex;
+      final list = await SearchSuggestService.fetch(engine, q);
+      if (!mounted || _remoteQuery != q) return;
+      setState(() => _remoteSuggestions = list);
+    });
   }
 
   Future<void> _recordRecent(String query) async {
@@ -1019,6 +1390,21 @@ class BrowserPageState extends State<BrowserPage> {
               if (mounted) setState(() => _recentSearches = list);
             },
           ),
+        ));
+      }
+    }
+
+    // 联网建议词：紧跟在近期搜索后面（无痕标签页不联网拉建议）。
+    if (q.isNotEmpty &&
+        s.suggestRemote &&
+        !_currentTab.private &&
+        _remoteSuggestions.isNotEmpty) {
+      for (final item in _remoteSuggestions) {
+        rows.add(row(
+          leading: EngineLogo(index: _defaultEngineIndex, size: 18),
+          title: item,
+          subtitle: '用 ${SearchEngines.name(_defaultEngineIndex)} 搜索',
+          onTap: () => _searchWith(_defaultEngineIndex, item),
         ));
       }
     }
@@ -1204,6 +1590,7 @@ class BrowserPageState extends State<BrowserPage> {
   }
 
   Future<void> _saveScreenshot() async {
+    final tab = _currentTab;
     try {
       final directory = await getApplicationDocumentsDirectory();
       final path =
@@ -1212,7 +1599,7 @@ class BrowserPageState extends State<BrowserPage> {
       ScreenshotResult result;
       try {
         result = await native.captureLong(
-          options: ScreenshotOptions(savePath: path),
+          options: ScreenshotOptions(savePath: path, sourceUrl: tab.url),
         );
       } on ScreenshotException catch (error) {
         if (error.code != ScreenshotErrorCode.unsupported) rethrow;
@@ -1321,6 +1708,7 @@ class BrowserPageState extends State<BrowserPage> {
       );
       await _dataStore.saveReadingList(_readingList);
       if (mounted) setState(() {});
+      unawaited(_pruneDanglingOfflineCopies());
     } catch (_) {
       // The online entry remains usable when archiving is unavailable.
     }
@@ -1342,6 +1730,7 @@ class BrowserPageState extends State<BrowserPage> {
                   time: item.savedAt,
                   excerpt: item.excerpt,
                   offlineHtmlPath: item.offlineHtmlPath,
+                  readAt: item.readAt,
                 ))
             .toList();
     Navigator.of(context).push(
@@ -1355,12 +1744,16 @@ class BrowserPageState extends State<BrowserPage> {
           },
           onOpen: (entry) {
             Navigator.of(context).pop();
+            if (!history) _markReadingItemRead(entry.url);
             if (!history && entry.hasOfflineCopy) {
               _openOfflineCopy(entry);
             } else {
               _go(entry.url);
             }
           },
+          onConvert: !history
+              ? (entry) => _convertReadingItemToBookmark(entry)
+              : null,
           onRemove: (url) async {
             if (history) {
               setState(() => _history.removeWhere((item) => item.url == url));
@@ -1384,6 +1777,41 @@ class BrowserPageState extends State<BrowserPage> {
         ),
       ),
     );
+  }
+
+  /// 打开阅读清单条目即视为已读（稍后读队列的收尾动作）。
+  Future<void> _markReadingItemRead(String url) async {
+    final index = _readingList.indexWhere((item) => item.url == url);
+    if (index < 0 || !_readingList[index].isUnread) return;
+    setState(() {
+      _readingList[index] = _readingList[index].markRead(DateTime.now());
+    });
+    await _dataStore.saveReadingList(_readingList);
+  }
+
+  /// 把阅读清单条目转成首页书签（收藏 = 图书馆，清单 = 待办，互通不重复）。
+  Future<void> _convertReadingItemToBookmark(CollectionEntry entry) async {
+    await widget.model
+        .addBookmark(url: entry.url, name: entry.title.isEmpty
+            ? entry.url : entry.title);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已收藏到书签：${entry.title.isEmpty
+          ? entry.url : entry.title}')),
+    );
+  }
+
+  /// 归档结束后顺手摘掉磁盘上已不存在的离线副本引用（自愈）。
+  Future<void> _pruneDanglingOfflineCopies() async {
+    final pruned = await _dataStore.pruneMissingOfflineContent();
+    if (pruned == 0 || !mounted) return;
+    final items = await _dataStore.loadReadingList();
+    if (!mounted) return;
+    setState(() {
+      _readingList
+        ..clear()
+        ..addAll(items);
+    });
   }
 
   /// Reads a saved offline copy in a dedicated tab so the live page's
@@ -1520,13 +1948,7 @@ class BrowserPageState extends State<BrowserPage> {
           menuTile(context, icon: Icons.delete_sweep_outlined, title: '关闭其他标签页',
               onTap: () {
             Navigator.pop(context);
-            final activeTab = _currentTab;
-            setState(() {
-              _tabs
-                ..clear()
-                ..add(activeTab);
-              _active = 0;
-            });
+            _closeOtherTabs();
           }),
         ],
       ),
@@ -1853,6 +2275,25 @@ class BrowserPageState extends State<BrowserPage> {
                                     width: 48,
                                     height: 48,
                                     child: IconButton(
+                                      tooltip: '恢复关闭的标签页',
+                                      onPressed: _recentlyClosed.isEmpty
+                                          ? null
+                                          : _restoreRecentlyClosed,
+                                      padding: EdgeInsets.zero,
+                                      icon: Icon(
+                                        Icons.restore_outlined,
+                                        size: 22,
+                                        color: _recentlyClosed.isEmpty
+                                            ? scheme.onSurfaceVariant
+                                                .withValues(alpha: .35)
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: IconButton(
                                       tooltip: '只看无痕',
                                       onPressed: () => setState(() =>
                                           _privateTabsOnly =
@@ -1874,16 +2315,7 @@ class BrowserPageState extends State<BrowserPage> {
                                       tooltip: '关闭其他',
                                       onPressed: _tabs.length < 2
                                           ? null
-                                          : () {
-                                              final activeTab = _currentTab;
-                                              setState(() {
-                                                _tabs
-                                                  ..clear()
-                                                  ..add(activeTab);
-                                                _active = 0;
-                                              });
-                                              _notifyTabCount();
-                                            },
+                                          : _closeOtherTabs,
                                       padding: EdgeInsets.zero,
                                       icon: Icon(
                                         Icons.delete_sweep_outlined,
@@ -1954,6 +2386,9 @@ class BrowserPageState extends State<BrowserPage> {
 
   @override
   void dispose() {
+    widget.model.removeListener(_onSettingsChanged);
+    _sessionSaveTimer?.cancel();
+    _suggestDebounce?.cancel();
     _address.dispose();
     _addressFocus.dispose();
     super.dispose();
@@ -2016,12 +2451,13 @@ class BrowserPageState extends State<BrowserPage> {
       editing: _showingAddressEditor,
       onActivate: _openAddressEditor,
       onSubmit: _go,
-      onChanged: (_) => setState(() {}),
+      onChanged: _onAddressChanged,
       onEngineTap: _showEnginePicker,
       engineButtonKey: _engineButtonKey,
       engineIndex: _defaultEngineIndex,
       onClose: _closeAddressEditor,
       private: tab.private,
+      insecure: tab.url.startsWith('http://'),
       onReload: tab.controller == null ? null : _reload,
     );
   }
@@ -2128,7 +2564,7 @@ class BrowserPageState extends State<BrowserPage> {
                                 autocorrect: false,
                                  enableSuggestions: false,
                                  onSubmitted: _go,
-                                 onChanged: (_) => setState(() {}),
+                                 onChanged: _onAddressChanged,
                                 style: TextStyle(
                                     fontSize: 14,
                                     color: tokens.addressBarForeground,
@@ -2140,7 +2576,11 @@ class BrowserPageState extends State<BrowserPage> {
                                   prefixIcon: Icon(
                                       tab.private
                                           ? Icons.visibility_off_outlined
-                                          : Icons.lock_outline,
+                                          // 明文 http 不亮锁：锁只属于 https。
+                                          : (tab.url.startsWith('https://') ||
+                                                  tab.url.isEmpty)
+                                              ? Icons.lock_outline
+                                              : Icons.language,
                                       size: 17),
                                   hintText: '搜索或输入网址',
                                   suffixIcon: _address.text.isEmpty

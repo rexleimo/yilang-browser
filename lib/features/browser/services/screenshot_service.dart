@@ -12,16 +12,21 @@ class ScreenshotOptions {
     this.maxWidth,
     this.maxHeight = 12000,
     this.savePath,
+    this.sourceUrl,
   });
 
   final int? maxWidth;
   final int? maxHeight;
   final String? savePath;
 
+  /// 发起截图的页面 URL：原生侧在多个 WebView 实例里据此挑出目标。
+  final String? sourceUrl;
+
   Map<String, Object?> toArguments() => <String, Object?>{
         if (maxWidth != null) 'maxWidth': maxWidth,
         if (maxHeight != null) 'maxHeight': maxHeight,
         if (savePath != null) 'savePath': savePath,
+        if (sourceUrl != null) 'url': sourceUrl,
       };
 }
 

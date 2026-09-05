@@ -282,6 +282,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _lastSentSlot = -9999;
     _lastSentCand = null;
     _lastSentRatio = -1;
+    _lastGeomUs = -1;
     _mergeHiding = false;
   }
 
@@ -442,10 +443,92 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
 
   void _moveDrag(Offset pos) {
     final d = m.drag!;
+    // 幽灵跟手：每个指针事件都更新（ValueNotifier，只重建 ghost 层，
+    // 不整页 setState）。指针事件可达 120~240Hz，比帧更密。
     _dragPointerNotifier.value = pos;
 
     // 组偏移：抓取时按各自格位相对主项计算
     if (_groupOffsets.isEmpty) _groupOffsets = _groupOffsetsFor(d);
+
+    // 几何判定节流到 ~120Hz：幽灵必须每事件跟手（便宜），但孔位/候选
+    // 的重叠矩形扫描、中线换算、dragOver 无需每事件重算——节流窗口内
+    // 直接跳过，8ms 的判定延迟肉眼不可见。
+    final nowUs = DateTime.now().microsecondsSinceEpoch;
+    if (_lastGeomUs < 0 || nowUs - _lastGeomUs >= 8000) {
+      _lastGeomUs = nowUs;
+      _moveDragGeometry(pos, d);
+    }
+
+    // 停留确认（计时靠"手指静止后不再产生指针事件"触发，每个事件都要
+    // 重置）：条目或文件夹候选压住 650ms → 出环确认（预览态）。
+    // 按住期间不提前建夹/开夹，松手才落定（成夹弹开 / 吸入文件夹弹开）。
+    // 快速滑过不误触发；任何移动都取消计时：必须静止才出环。
+    // 指针在板面网格外（拖出交接后停在原面板区）不出环——否则交接
+    // 瞬间停手就会冻结出合并环。
+    _dwellTimer?.cancel();
+    _dwellTimer = Timer(const Duration(milliseconds: 650), () {
+      if (m.drag == null) return;
+      if (!_insideBoard) return;
+      // 出环即确认（预览态）：按住期间不提前成夹，松手才落定成夹。
+      // 记录冻结那一刻的指针位置，供解冻做累计位移对比。
+      _freezePos = _lastPos;
+      m.freezeOnCandidate();
+    });
+    _lastPos = pos;
+
+    // 边缘翻页（计时器驱动，手停也能翻）
+    final edgeZone = pos.dx < 26 || pos.dx > _pageW - 26;
+    if (edgeZone && m.drag != null) {
+      final dir = pos.dx < 26 ? -1 : 1;
+      _edgeTimer ??= Timer(const Duration(milliseconds: 480), () {
+        final target = m.cur + dir;
+        if (m.drag != null && (target >= 0 && target <= m.pages.length)) {
+          m.flipDragTo(target);
+        }
+      });
+    } else {
+      _edgeTimer?.cancel();
+      _edgeTimer = null;
+    }
+  }
+
+  /// 拖拽几何判定（节流后调用）：重叠候选、插入孔位、解冻阈值、dragOver。
+  void _moveDragGeometry(Offset pos, DragInfo d) {
+    // 先处理移动解冻：冻结后累计位移超 10px 即解冻（任意位置生效，
+    // 包括拖出板面）。阈值必须对比「冻结那一刻的位置」而不是上一次
+    // 指针事件——慢速拖动每次事件只挪 1~3px，用事件间距离永远达不到
+    // 阈值，会导致冻结卡死、位置不再计算（用户实测 bug）。
+    if (d.frozen &&
+        _freezePos != null &&
+        (_freezePos! - pos).distance > 10) {
+      m.unfreeze();
+      _freezePos = null;
+      _lastSentSlot = -9999;
+      _lastSentCand = null;
+      _lastSentRatio = -1;
+      _mergeHiding = false;
+    }
+
+    // 板面网格门禁：指针不在板面矩形内时不做孔位/候选判定。
+    // 拖出交接瞬间指针常仍停在原面板区（板面外），slotFromInsertion
+    // 会把它 clamp 到第一行格位 → 出现假挖孔 + 让位，停 650ms 还会
+    // 误冻结出合并环（用户反馈的「一级图标交互效果」）。此处收孔清
+    // 候选，松手按原位落回（endDrag 的 insertIdx<0 语义）。
+    final insideBoard = pos.dx >= 0 &&
+        pos.dy >= 0 &&
+        pos.dx <= _pageW &&
+        pos.dy <= _boardH;
+    _insideBoard = insideBoard;
+    if (!insideBoard) {
+      if (!d.frozen && (_lastSentSlot != -1 || _lastSentCand != null)) {
+        m.dragOver(m.cur, -1, null, 0);
+      }
+      _lastSentSlot = -1;
+      _lastSentCand = null;
+      _lastSentRatio = 0;
+      _mergeHiding = false;
+      return;
+    }
 
     // 页面局部坐标（主项左上角 = 指针位置 - 抓取点偏移）
     final pageLocal = Offset(pos.dx + (m.cur - d.page) * _pageW, pos.dy);
@@ -486,22 +569,9 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     for (var i = 0; i < arr.length && i < slotStatic; i++) {
       if (d.all.any((x) => x.id == arr[i].id)) displaySlot--;
     }
-    // 先处理移动解冻：冻结后累计位移超 10px 即解冻。
-    // 阈值必须对比「冻结那一刻的位置」而不是上一次指针事件——
-    // 慢速拖动每次事件只挪 1~3px，用事件间距离永远达不到阈值，
-    // 会导致冻结卡死、位置不再计算（用户实测 bug）。
-    if (d.frozen &&
-        _freezePos != null &&
-        (_freezePos! - pos).distance > 10) {
-      m.unfreeze();
-      _freezePos = null;
-      _lastSentSlot = -9999;
-      _lastSentCand = null;
-      _lastSentRatio = -1;
-      _mergeHiding = false;
-    }
     // 节流：孔位不变、候选不变、合并显隐不变、比率漂移 <0.05 → 不发 notify。
     // 合并显隐带滞回（≥0.6 进，<0.5 出），手指临界抖动不闪缝。
+    // （比率本身已由 dragOver 静默更新，这里的漂移检查只为合并显隐滞回。）
     final candId = bestEntity?.id;
     final wantHide =
         bestRatio >= 0.6 ? true : (bestRatio < 0.5 ? false : _mergeHiding);
@@ -523,35 +593,6 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
       _lastSentRatio = bestRatio;
       _mergeHiding = wantHide;
     }
-
-    // 停留确认（计时靠"手指静止后不再产生指针事件"触发，每个事件都要
-    // 重置）：条目或文件夹候选压住 650ms → 出环确认（预览态）。
-    // 按住期间不提前建夹/开夹，松手才落定（成夹弹开 / 吸入文件夹弹开）。
-    // 快速滑过不误触发；任何移动都取消计时：必须静止才出环。
-    _dwellTimer?.cancel();
-    _dwellTimer = Timer(const Duration(milliseconds: 650), () {
-      if (m.drag == null) return;
-      // 出环即确认（预览态）：按住期间不提前成夹，松手才落定成夹。
-      // 记录冻结那一刻的指针位置，供解冻做累计位移对比。
-      _freezePos = _lastPos;
-      m.freezeOnCandidate();
-    });
-    _lastPos = pos;
-
-    // 边缘翻页（计时器驱动，手停也能翻）
-    final edgeZone = pos.dx < 26 || pos.dx > _pageW - 26;
-    if (edgeZone && m.drag != null) {
-      final dir = pos.dx < 26 ? -1 : 1;
-      _edgeTimer ??= Timer(const Duration(milliseconds: 480), () {
-        final target = m.cur + dir;
-        if (m.drag != null && (target >= 0 && target <= m.pages.length)) {
-          m.flipDragTo(target);
-        }
-      });
-    } else {
-      _edgeTimer?.cancel();
-      _edgeTimer = null;
-    }
   }
 
   Offset? _lastPos;
@@ -561,6 +602,11 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
   int _lastSentSlot = -9999;
   String? _lastSentCand;
   double _lastSentRatio = -1;
+  // 几何判定节流时间戳（微秒；-1 = 立即判定）。幽灵每事件跟手，
+  // 重叠扫描/中线换算最多 ~120Hz。
+  int _lastGeomUs = -1;
+  // 最近一次几何判定时指针是否在板面网格内（dwell 冻结的门禁）。
+  bool _insideBoard = true;
   // 合并预览开关（滞回：ratio≥0.6 进，<0.5 出），防缝显隐临界闪烁。
   bool _mergeHiding = false;
 
@@ -780,6 +826,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     _lastSentSlot = -9999;
     _lastSentCand = null;
     _lastSentRatio = -1;
+    _lastGeomUs = -1;
     _mergeHiding = false;
     _lastPos = null;
   _freezePos = null;
@@ -1345,9 +1392,12 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
           for (var i = 0; i < page.length; i++)
             page[i].id == d.id || d.group.any((g) => g.id == page[i].id)
                 ? _originGap(page[i], i)
-                : _tileAt(page[i], i, p,
+                : _tileAt(page[i],
+                    staticIdx: i,
+                    displayIdx: i,
+                    pageIdx: p,
                     // 合并确认目标不做让位滑动：出环瞬间原位钉住（用户要求
-                    // 目标位置零变动，环从外层附着）；邻格保持 180ms 滑动。
+                    // 目标位置零变动，环从外层附着）
                     snap: d.mergeTarget?.id == page[i].id ||
                         d.hoverFolder?.id == page[i].id),
         ],
@@ -1356,35 +1406,48 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     final showHole = isDragPage && !d.frozen;
     final members =
         d == null ? <String>{} : d.all.map((x) => x.id).toSet();
-    final display = <BookmarkEntity?>[];
+    // (展示位实体, 列表静态位)：拖拽中列表保持静态帧，展示位由孔位推出。
+    // 静态位喂给 Positioned（每格一次 layout），静态位→展示位差值喂给
+    // Transform（合成器逐帧让位），不再走 AnimatedPositioned 逐帧整板 layout。
+    final display = <(BookmarkEntity?, int)>[];
     if (d != null) {
       var k = 0;
-      for (final e in page) {
+      var holePlaced = false;
+      for (var i = 0; i < page.length; i++) {
+        final e = page[i];
         if (members.contains(e.id)) continue;
-        if (showHole && k == d.insertIdx) display.add(null);
-        display.add(e);
+        if (showHole && !holePlaced && k == d.insertIdx) {
+          display.add((null, -1));
+          holePlaced = true;
+        }
+        display.add((e, i));
         k++;
       }
-      if (showHole && d.insertIdx >= k) display.add(null);
+      if (showHole && !holePlaced && d.insertIdx >= k) {
+        display.add((null, -1));
+      }
     } else {
-      display.addAll(page);
+      for (var i = 0; i < page.length; i++) {
+        display.add((page[i], i));
+      }
     }
     return Stack(
       children: [
         for (var i = 0; i < display.length; i++)
-          display[i] == null ? _holeTile(i) : _tileAt(display[i]!, i, p),
+          display[i].$1 == null
+              ? _holeTile(i)
+              : _tileAt(display[i].$1!,
+                  staticIdx: display[i].$2, displayIdx: i, pageIdx: p),
       ],
     );
   }
 
-  /// 原位透明缝：合并预览时拖拽成员老位置只撑布局（露底），
-  /// 其余格子按原位排布，目标恒在手指下。Animated 保证与插入缝切换时滑动过渡。
+  /// 原位透明缝：合并预览时拖拽成员老位置只撑布局（露底）。
+  /// 缝是透明的，位置动画毫无视觉意义 → 静态 Positioned，零成本。
   Widget _originGap(BookmarkEntity e, int idx) {
     final pos = BoardMetrics.xy(idx);
-    return AnimatedPositioned(
+    return Positioned(
       key: ValueKey('origin-gap-${e.id}'),
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
       left: pos.dx,
       top: pos.dy,
       width: BoardMetrics.cellW,
@@ -1393,15 +1456,12 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     );
   }
 
-  /// 插入缝：透明占位，只撑开布局让图标滑动让位，不画任何白块，
-  /// 缝里露出板底（iOS 式）。一路 AnimatedPositioned 滑行动画；
-  /// 高频节流保证只在孔位变化时重建，不会每帧重启。
+  /// 插入缝：透明占位，只撑开布局让图标让位，不画任何白块，
+  /// 缝里露出板底（iOS 式）。同为透明 → 静态 Positioned。
   Widget _holeTile(int displayIdx) {
     final pos = BoardMetrics.xy(displayIdx);
-    return AnimatedPositioned(
+    return Positioned(
       key: const ValueKey('drag-hole'),
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
       left: pos.dx,
       top: pos.dy,
       width: BoardMetrics.cellW,
@@ -1410,13 +1470,15 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
     );
   }
 
-  Widget _tileAt(BookmarkEntity e, int idx, int pageIdx,
-      {bool snap = false}) {
-    final pos = BoardMetrics.xy(idx);
+  Widget _tileAt(BookmarkEntity e,
+      {required int staticIdx, required int displayIdx, required int pageIdx,
+      bool snap = false}) {
     final d = m.drag;
     final isDragMember = d != null && d.all.any((x) => x.id == e.id);
     final isMergeTarget =
         d?.mergeTarget?.id == e.id || d?.hoverFolder?.id == e.id;
+    final jiggling =
+        m.editing && !isDragMember && pageIdx == m.cur && !isMergeTarget;
     final body = Opacity(
       // 落位滑入动画期间隐藏落点磁贴，动画结束后显现（与幽灵无缝衔接）
       opacity: _settle?.entity.id == e.id ? 0 : 1,
@@ -1425,8 +1487,7 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
         faded: isDragMember,
         // 只抖当前页：非可见页挂起的磁贴不跑动画（编辑态最多省 3/4 ticker 负载）
         // 抽屉不抖：合并确认目标关掉 jiggle（托盘钉死感）
-        jiggling:
-            m.editing && !isDragMember && pageIdx == m.cur && !isMergeTarget,
+        jiggling: jiggling,
         jiggle: _jiggleCtrl,
         // iOS 参考：编辑态每个磁贴左上角显示减号徽章，点击弹确认删除。
         onDelete: m.editing ? () => _askDelete(e) : null,
@@ -1434,18 +1495,18 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
         merged: isMergeTarget,
       ),
     );
-    // 一路滑动让位（iOS 味）；节流保证只在孔位变化时重建，
-    // Animated 不会被高频指针事件重启。
-    return AnimatedPositioned(
+    // 让位 = 静态 Positioned 钉在逻辑槽位 + Transform 补静态位→展示位差值。
+    // Transform 走合成器（GPU 挪图层），AnimatedPositioned 改 left/top 走
+    // layout（每帧整板重排）——拖拽跟手的关键分界。snap（合并确认目标）
+    // 直接钉在原位。jiggle 自带 Transform 内层 RepaintBoundary，
+    // 此处不再包一层，避免双层离屏图层。
+    final child = jiggling ? body : RepaintBoundary(child: body);
+    return _SlotTile(
       key: ValueKey('tile-${e.id}'),
-      // snap：合并确认目标原位钉住，不做让位滑动动画
-      duration: snap ? Duration.zero : const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      left: pos.dx,
-      top: pos.dy,
-      width: BoardMetrics.cellW,
-      height: BoardMetrics.cellH,
-      child: body,
+      staticPos: BoardMetrics.xy(staticIdx),
+      delta: snap ? Offset.zero : BoardMetrics.xy(displayIdx) - BoardMetrics.xy(staticIdx),
+      animate: !snap,
+      child: child,
     );
   }
 
@@ -1566,6 +1627,99 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
             looksLikeUrl ? value : SearchEngines.searchUrl(_searchSource, value));
     }
     _addressController.clear();
+  }
+}
+
+/// 让位磁贴：静态 Positioned 钉在逻辑槽位，视觉位移用 Transform.translate
+/// 表达（合成器搬图层），替代 AnimatedPositioned 的逐帧整板 layout。
+/// 24 格里通常只有 1~3 格在位移，其余磁贴的图层完全不动。
+/// 动画被新孔位打断时从当前插值位置接着走向新目标，不跳变
+/// （与 Flutter 官方 ReorderableList 2025 修复的打断续播一致）。
+class _SlotTile extends StatefulWidget {
+  const _SlotTile({
+    super.key,
+    required this.staticPos,
+    required this.delta,
+    required this.animate,
+    required this.child,
+  });
+
+  /// 逻辑槽位左上角（列表静态位），Positioned 只在拖拽起止时变一次。
+  final Offset staticPos;
+
+  /// 静态位 → 展示位的偏移（孔位让位量）；零偏移时 Transform 恒等。
+  final Offset delta;
+
+  /// false = snap：立即钉在目标位（合并确认目标），不播动画。
+  final bool animate;
+
+  /// 已包好 RepaintBoundary 的磁贴内容（栅格缓存，位移只动合成器）。
+  final Widget child;
+
+  @override
+  State<_SlotTile> createState() => _SlotTileState();
+}
+
+class _SlotTileState extends State<_SlotTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+  );
+  Offset _from = Offset.zero;
+  Offset _to = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _to = widget.delta;
+    // 起拖瞬间孔位出现：从原位滑出让位（iOS 手感）；snap 则直接钉住。
+    if (_to != Offset.zero && widget.animate) {
+      _c.forward();
+    } else {
+      _c.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SlotTile old) {
+    super.didUpdateWidget(old);
+    if (widget.delta != _to) {
+      // 从当前插值位置接着走向新目标（中断续播，不跳变）
+      _from = Offset.lerp(_from, _to, Curves.easeOutCubic.transform(_c.value))!;
+      _to = widget.delta;
+      if (widget.animate) {
+        _c.forward(from: 0);
+      } else {
+        _c.value = 1;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: widget.staticPos.dx,
+      top: widget.staticPos.dy,
+      width: BoardMetrics.cellW,
+      height: BoardMetrics.cellH,
+      child: AnimatedBuilder(
+        animation: _c,
+        // child 缓存：动画期间磁贴子树不 rebuild，只改 transform
+        child: widget.child,
+        builder: (context, child) => Transform.translate(
+          offset: Offset.lerp(
+              _from, _to, Curves.easeOutCubic.transform(_c.value))!,
+          child: child,
+        ),
+      ),
+    );
   }
 }
 

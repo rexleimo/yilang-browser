@@ -502,6 +502,11 @@ class _FaviconImageState extends State<_FaviconImage> {
   Widget build(BuildContext context) {
     final s = widget.iconSize;
     if (!_loaded || _bytes == null) return const SizedBox.shrink();
+    // 按显示尺寸 × devicePixelRatio 解码（ResizeImage 默认不放大）：
+    // favicon 原图可能远大于磁贴内的实际显示盒，全尺寸解码再靠 BoxFit
+    // 缩小会白吃内存与栅格化时间；文件夹迷你格（~14px）收益最明显。
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final decodePx = (s * .66 * dpr).round().clamp(16, 256);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
       color: Colors.white,
@@ -513,6 +518,7 @@ class _FaviconImageState extends State<_FaviconImage> {
           height: s * .66,
           child: Image.memory(
             _bytes!,
+            cacheWidth: decodePx,
             fit: BoxFit.contain,
             gaplessPlayback: true,
             frameBuilder: (ctx, child, frame, _) => AnimatedOpacity(

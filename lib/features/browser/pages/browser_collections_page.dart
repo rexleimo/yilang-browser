@@ -11,6 +11,7 @@ class CollectionEntry {
     required this.time,
     this.excerpt = '',
     this.offlineHtmlPath,
+    this.readAt,
   });
 
   final String title;
@@ -19,8 +20,13 @@ class CollectionEntry {
   final String excerpt;
   final String? offlineHtmlPath;
 
+  /// 阅读完成时间；null 表示未读（仅阅读清单使用）。
+  final DateTime? readAt;
+
   bool get hasOfflineCopy =>
       offlineHtmlPath != null && offlineHtmlPath!.isNotEmpty;
+
+  bool get isUnread => readAt == null;
 }
 
 class BrowserCollectionPage extends StatefulWidget {
@@ -31,6 +37,7 @@ class BrowserCollectionPage extends StatefulWidget {
     required this.onOpen,
     this.onRemove,
     this.onClear,
+    this.onConvert,
     this.onBack,
   });
 
@@ -41,6 +48,9 @@ class BrowserCollectionPage extends StatefulWidget {
   final ValueChanged<CollectionEntry> onOpen;
   final ValueChanged<String>? onRemove;
   final Future<void> Function()? onClear;
+
+  /// 把条目转成书签（仅阅读清单）。
+  final ValueChanged<CollectionEntry>? onConvert;
   final VoidCallback? onBack;
 
   @override
@@ -50,6 +60,7 @@ class BrowserCollectionPage extends StatefulWidget {
 class _BrowserCollectionPageState extends State<BrowserCollectionPage> {
   final TextEditingController _search = TextEditingController();
   late List<CollectionEntry> _items;
+  bool _unreadOnly = false;
 
   @override
   void initState() {
@@ -65,11 +76,13 @@ class _BrowserCollectionPageState extends State<BrowserCollectionPage> {
 
   List<CollectionEntry> get _filtered {
     final query = _search.text.trim().toLowerCase();
-    if (query.isEmpty) return _items;
     return _items
-        .where((item) =>
-            item.title.toLowerCase().contains(query) ||
-            item.url.toLowerCase().contains(query))
+        .where((item) {
+          if (!widget.history && _unreadOnly && !item.isUnread) return false;
+          if (query.isEmpty) return true;
+          return item.title.toLowerCase().contains(query) ||
+              item.url.toLowerCase().contains(query);
+        })
         .toList();
   }
 
@@ -148,26 +161,51 @@ class _BrowserCollectionPageState extends State<BrowserCollectionPage> {
             Container(
               color: tokens.toolbarBackground,
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-              child: TextField(
-                controller: _search,
-                onChanged: (_) => setState(() {}),
-                style:
-                    TextStyle(fontSize: 14, color: tokens.addressBarForeground),
-                decoration: InputDecoration(
-                  isDense: true,
-                  filled: true,
-                  fillColor:
-                      scheme.surfaceContainerHighest.withValues(alpha: .55),
-                  hintText: widget.history ? '搜索历史' : '搜索已保存的文章',
-                  prefixIcon: const Icon(Icons.search, size: 19),
-                  prefixIconColor: tokens.addressBarForeground,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _search,
+                    onChanged: (_) => setState(() {}),
+                    style: TextStyle(
+                        fontSize: 14, color: tokens.addressBarForeground),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor:
+                          scheme.surfaceContainerHighest.withValues(alpha: .55),
+                      hintText: widget.history ? '搜索历史' : '搜索已保存的文章',
+                      prefixIcon: const Icon(Icons.search, size: 19),
+                      prefixIconColor: tokens.addressBarForeground,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 10, horizontal: 12),
+                    ),
                   ),
-                  contentPadding:
-                      const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                ),
+                  if (!widget.history) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        ChoiceChip(
+                          label: const Text('全部'),
+                          selected: !_unreadOnly,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) => setState(() => _unreadOnly = false),
+                        ),
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: Text(
+                              '未读（${_items.where((item) => item.isUnread).length}）'),
+                          selected: _unreadOnly,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) => setState(() => _unreadOnly = true),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
             Expanded(
@@ -230,15 +268,41 @@ class _BrowserCollectionPageState extends State<BrowserCollectionPage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        item.title.isEmpty
-                                            ? item.url
-                                            : item.title,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontSize: 14.5,
-                                            fontWeight: FontWeight.w600),
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: [
+                                          if (!widget.history &&
+                                              item.isUnread) ...[
+                                            Container(
+                                              width: 7,
+                                              height: 7,
+                                              margin: const EdgeInsets.only(
+                                                  right: 6),
+                                              decoration: const BoxDecoration(
+                                                color: AppColors.brand,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          ],
+                                          Expanded(
+                                            child: Text(
+                                              item.title.isEmpty
+                                                  ? item.url
+                                                  : item.title,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 14.5,
+                                                fontWeight:
+                                                    (!widget.history &&
+                                                            item.isUnread)
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
@@ -285,13 +349,27 @@ class _BrowserCollectionPageState extends State<BrowserCollectionPage> {
                                         color: scheme.onSurfaceVariant,
                                       ),
                                     ),
-                                    if (!widget.history && item.hasOfflineCopy)
+                                    if (!widget.history &&
+                                        item.hasOfflineCopy)
                                       const Padding(
                                         padding: EdgeInsets.only(top: 6),
                                         child: Icon(
                                           Icons.download_done,
                                           size: 16,
                                           color: AppColors.brandStrong,
+                                        ),
+                                      ),
+                                    if (!widget.history &&
+                                        widget.onConvert != null)
+                                      IconButton(
+                                        tooltip: '转为书签收藏',
+                                        onPressed: () =>
+                                            widget.onConvert!(item),
+                                        visualDensity: VisualDensity.compact,
+                                        icon: Icon(
+                                          Icons.star_border,
+                                          size: 18,
+                                          color: scheme.onSurfaceVariant,
                                         ),
                                       ),
                                     if (widget.onRemove != null)

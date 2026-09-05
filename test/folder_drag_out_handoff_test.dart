@@ -262,6 +262,89 @@ void main() {
     );
   });
 
+  testWidgets(
+      'dragging inside panel over own cell / gaps does NOT hand off',
+      (tester) async {
+    final model = _model();
+    await _pump(tester, model);
+
+    await tester.tap(find.byKey(const ValueKey('tile-f1')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('3 个项目'), findsOneWidget);
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Alpha')),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+
+    // 悬停在自己的原格上（格子 target 拒绝 → 背景 target 接管 onMove）。
+    // 修复前：背景 target 立即交接 → 面板收起、条目飞出（面板内无法重排）。
+    await gesture.moveBy(const Offset(18, 26));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    await gesture.moveBy(const Offset(-14, -20));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(model.drag, isNull, reason: '指针仍在面板内，不应触发拖出交接');
+    expect(find.text('3 个项目'), findsOneWidget, reason: '面板不应收起');
+
+    // 面板内松手（格子拒绝自己 → 落到背景 target）：原位取消，不拖出
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(tester.takeException(), isNull);
+    final folder =
+        model.pages.first.firstWhere((e) => e.id == 'f1') as BookmarkFolder;
+    expect(folder.children.any((c) => c.id == 'c1'), isTrue,
+        reason: '面板内松手不应把条目拖出文件夹');
+    expect(model.pages.first.any((e) => e.id == 'c1' && e != folder), isFalse,
+        reason: '条目不应被误移到首页板');
+  });
+
+  testWidgets(
+      'handoff with pointer outside board grid does not punch hole',
+      (tester) async {
+    final model = _model();
+    await _pump(tester, model);
+
+    await tester.tap(find.byKey(const ValueKey('tile-f1')));
+    await tester.pump();
+    await tester.pump();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Alpha')),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+
+    // 拖到屏幕顶部（板面网格之外）触发交接
+    final alpha = tester.getCenter(find.text('Alpha'));
+    await gesture.moveBy(Offset(alpha.dx - 200, 30) - alpha);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(model.drag, isNotNull, reason: '越出面板边界应已交接');
+    expect(model.drag!.insertIdx, -1,
+        reason: '指针在板面网格外不应被 clamp 成第一行假挖孔');
+
+    // 板面外停住也不冻结出合并环
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(model.drag!.frozen, isFalse,
+        reason: '板面网格外停留不应触发合并/吸入冻结');
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(tester.takeException(), isNull);
+    // 原位落回：条目已在首页顶层（dragOutFromFolder 的位置）
+    expect(model.pages.first.any((e) => e.id == 'c1'), isTrue,
+        reason: '拖出条目应落回首页板');
+  });
+
   // 纯 test()：testWidgets 的 FakeAsync zone 会把 sqlite 的 Future(() …)
   // 闭包排队成 timer，无 pump 推进 → await 死锁（sqlite_store_test 同理用纯 test）。
   test('handoff release persists through sqlite store (prod parity)', () async {
