@@ -1,0 +1,5 @@
+# 一览 Yilan 官网
+User-agent: *
+Allow: /
+
+Sitemap: https://rexleimo.github.io/yilang-browser/sitemap.xml

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 基础 SEO：单页单意图「一览 Yilan 移动浏览器」 -->
+<title>一览 Yilan 浏览器 — iOS 原生风格移动浏览器，以书签管理为核心 | 官网下载</title>
+<meta name="description" content="一览 Yilan 是免费免登录的 iOS 原生风格移动浏览器，以书签管理为核心体验：网格书签首页、多标签无痕浏览、阅读模式、离线阅读清单、下载中心、网页翻译。iOS / Android 双端下载，书签支持 Netscape HTML 互通导入导出。">
+<meta name="keywords" content="一览浏览器, Yilan 浏览器, iOS 风格浏览器, 移动浏览器, 书签管理, 手机浏览器, 稍后读, 离线阅读, 安卓浏览器, iOS浏览器">
+<meta name="author" content="一览 Yilan">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta name="theme-color" content="#4353C4">
+<!-- 部署域名变更时同步替换 canonical / og:url / sitemap -->
+<link rel="canonical" href="https://rexleimo.github.io/yilang-browser/">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="一览 Yilan">
+<meta property="og:title" content="一览 Yilan 浏览器 — iOS 原生风格移动浏览器，以书签管理为核心">
+<meta property="og:description" content="免费免登录的移动浏览器：网格书签首页、多标签无痕、阅读模式、离线清单。iOS / Android 双端下载。">
+<meta property="og:url" content="https://rexleimo.github.io/yilang-browser/">
+<meta property="og:image" content="https://rexleimo.github.io/yilang-browser/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="一览 Yilan 浏览器 — 打开网页，一览无余">
+<meta property="og:locale" content="zh_CN">
+
+<!-- Twitter / X Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="一览 Yilan 浏览器 — iOS 原生风格移动浏览器">
+<meta name="twitter:description" content="免费免登录：网格书签首页、多标签无痕、阅读模式、离线清单。iOS / Android 双端下载。">
+<meta name="twitter:image" content="https://rexleimo.github.io/yilang-browser/og-image.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+<!-- 结构化数据：软件应用（answer-engine / rich result） -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "一览 Yilan",
+  "alternateName": "Yilan Browser",
+  "url": "https://rexleimo.github.io/yilang-browser/",
+  "applicationCategory": "BrowserApplication",
+  "operatingSystem": "iOS, Android",
+  "description": "iOS 原生风格的移动浏览器，以书签管理为核心体验。支持网格书签首页、多标签与无痕浏览、阅读模式、离线阅读清单、下载中心、网页翻译与 Netscape HTML 书签导入导出。",
+  "inLanguage": "zh-CN",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
+  "featureList": [
+    "iOS 风格网格书签首页，支持文件夹与批量管理",
+    "多标签浏览与无痕模式，冷启动会话恢复",
+    "阅读模式自动提取正文",
+    "阅读清单离线归档，一键转书签",
+    "下载中心：进度、取消、重试",
+    "网页一键翻译为中文",
+    "Netscape HTML 书签导入导出"
+  ],
+  "author": { "@type": "Organization", "name": "一览 Yilan", "url": "https://github.com/rexleimo/yilang-browser" }
+}
+</script>
+
+<!-- 结构化数据：FAQ（answer-engine 抽取） -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "我的书签和数据会上传到云端吗？",
+      "acceptedAnswer": { "@type": "Answer", "text": "不会。书签、历史、阅读清单均保存在设备本地，无账号体系、无强制云同步；迁移时使用标准 Netscape HTML 导入导出，数据始终归用户所有。" }
+    },
+    {
+      "@type": "Question",
+      "name": "一览 Yilan 支持哪些平台和系统版本？",
+      "acceptedAnswer": { "@type": "Answer", "text": "基于 Flutter 构建，iOS 使用 WKWebView、Android 使用系统 WebView，双端同步迭代，安装包按 CPU 架构拆分。" }
+    },
+    {
+      "@type": "Question",
+      "name": "怎么把旧浏览器的书签迁移过来？",
+      "acceptedAnswer": { "@type": "Answer", "text": "在旧浏览器导出 Netscape 格式 HTML 书签文件，再在一览的设置中导入即可，文件夹结构完整保留；同样支持随时导出备份。" }
+    },
+    {
+      "@type": "Question",
+      "name": "阅读清单离线归档是什么？",
+      "acceptedAnswer": { "@type": "Answer", "text": "加入阅读清单的页面可离线归档净化副本，断网也能完整阅读正文与配图；已读未读状态一目了然，读完可一键转为书签。" }
+    }
+  ]
+}
+</script>
+
+<!-- 结构化数据：站点身份 -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "一览 Yilan 官网",
+  "url": "https://rexleimo.github.io/yilang-browser/",
+  "inLanguage": "zh-CN",
+  "publisher": {
+    "@type": "Organization",
+    "name": "一览 Yilan",
+    "url": "https://github.com/rexleimo/yilang-browser",
+    "logo": { "@type": "ImageObject", "url": "https://rexleimo.github.io/yilang-browser/favicon.svg" }
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<header class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="一览 Yilan 首页">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="22" height="22"><circle cx="50" cy="50" r="34" fill="none" stroke="currentColor" stroke-width="13"/><circle cx="80" cy="20" r="16" fill="currentColor"/></svg>
+      </span>
+      <span class="brand-name">一览 <em>Yilan</em></span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#features">功能</a>
+      <a href="#signature">亮点</a>
+      <a href="#workflow">体验</a>
+      <a href="#faq">常见问题</a>
+      <a href="https://github.com/rexleimo/yilang-browser" rel="noopener" aria-label="GitHub 源码仓库">GitHub</a>
+    </nav>
+    <div class="nav-actions">
+      <a class="btn btn-ghost" href="#faq">了解更多</a>
+      <a class="btn btn-primary" href="#download">下载 App</a>
+    </div>
+    <button class="nav-burger" id="burger" aria-label="打开菜单" aria-expanded="false">
+      <span></span><span></span>
+    </button>
+  </div>
+  <div class="nav-drawer" id="drawer">
+    <a href="#features">功能</a>
+    <a href="#signature">亮点</a>
+    <a href="#workflow">体验</a>
+    <a href="#faq">常见问题</a>
+    <a class="btn btn-primary" href="#download">下载 App</a>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow reveal">YILAN BROWSER · 移动浏览器</p>
+      <h1 class="display reveal d1">打开网页<br><span class="grad-text">一览</span>无余。</h1>
+      <p class="hero-sub reveal d2">iOS 原生风格的移动浏览器，以书签管理为核心体验。多标签、阅读模式、离线清单——一部手机，全装得下。</p>
+      <div class="hero-cta reveal d3">
+        <a class="btn btn-primary btn-lg" href="#download">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
+          免费下载
+        </a>
+        <a class="btn btn-secondary btn-lg" href="#features">了解功能</a>
+      </div>
+      <ul class="hero-meta reveal d4" aria-label="平台信息">
+        <li>Android 版已发布</li>
+        <li>免登录使用</li>
+        <li>书签互通导入导出</li>
+        <li>iOS 版开发中</li>
+      </ul>
+    </div>
+
+    <div class="hero-stage reveal d2" aria-hidden="true">
+      <div class="phone">
+        <div class="phone-notch"></div>
+        <div class="phone-screen">
+          <div class="p-status"><span class="p-time">9:41</span><span class="p-sig"><i></i><i></i><i></i><b></b></span></div>
+          <div class="p-greet">
+            <p class="p-date">9月5日 周六</p>
+            <p class="p-title">一览</p>
+          </div>
+          <div class="p-omnibox">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <span>搜索或输入网址</span>
+          </div>
+          <div class="p-grid" id="pgrid"></div>
+          <div class="p-toolbar">
+            <span class="tb-btn"><i class="ic-arrow"></i></span>
+            <span class="tb-btn"><i class="ic-arrow flip"></i></span>
+            <span class="tb-btn tb-accent"><i class="ic-share"></i></span>
+            <span class="tb-btn"><i class="ic-tabs"></i><b class="tb-badge">4</b></span>
+            <span class="tb-btn"><i class="ic-menu"></i></span>
+          </div>
+          <div class="p-homebar"></div>
+        </div>
+      </div>
+      <div class="float-chip chip-a">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v3H4zM6 11h12v8H6z"/><path d="M9 8V5m6 3V5"/></svg>
+        阅读模式
+      </div>
+      <div class="float-chip chip-b">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M5.5 6.5l13 13"/></svg>
+        无痕浏览
+      </div>
+      <div class="float-chip chip-c">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5"/><rect x="5" y="17" width="14" height="3.4" rx="1.7"/></svg>
+        离线清单
+      </div>
+      <div class="hero-orb orb-a" aria-hidden="true"></div>
+      <div class="hero-orb orb-b" aria-hidden="true"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ QUICK ANSWER（GEO 首答） ============ -->
+<section class="quick-answer" aria-label="一览是什么">
+  <div class="container qa-grid">
+    <div class="qa-block">
+      <h2 class="qa-q">一览 Yilan 是什么？</h2>
+      <p class="qa-a">一览 Yilan 是一款免费、免登录的移动浏览器，采用 iOS 原生设计风格，以书签管理为核心体验。它提供 iOS 风格的网格书签首页、多标签与无痕浏览、阅读模式、可离线归档的阅读清单、下载中心和一键网页翻译，支持 iOS 与 Android 双端，书签可通过标准 Netscape HTML 与其他浏览器互通。</p>
+    </div>
+    <div class="qa-block">
+      <h2 class="qa-q">适合谁用？</h2>
+      <p class="qa-a">适合重书签用户、稍后读爱好者，以及想要一个轻快、干净、数据完全本地化的浏览器的人。无需注册账号，安装即用；历史、Cookie、缓存随时可清，书签随时可带走。</p>
+    </div>
+    <div class="qa-cta">
+      <a class="btn btn-primary btn-lg" href="#download">免费下载 App</a>
+      <a class="btn btn-secondary btn-lg" href="https://github.com/rexleimo/yilang-browser" rel="noopener">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2A10 10 0 002 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33s1.71.11 2.5.33c1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.68.92.68 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z"/></svg>
+        GitHub 源码
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STATS ============ -->
+<section class="stats">
+  <div class="container stats-row">
+    <div class="stat reveal"><b>双端</b><span>iOS · Android 同步迭代</span></div>
+    <div class="stat reveal d1"><b>0 门槛</b><span>无账号体系，装上即用</span></div>
+    <div class="stat reveal d2"><b>~20MB</b><span>arm64 安装包轻量体积</span></div>
+    <div class="stat reveal d3"><b>Netscape</b><span>标准 HTML 书签互通</span></div>
+  </div>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section class="section" id="features">
+  <div class="container">
+    <p class="eyebrow reveal">FEATURES · 全部功能</p>
+    <h2 class="display-md reveal d1">核心能力，<br>一个不少。</h2>
+    <div class="feature-grid">
+      <article class="fcard reveal">
+        <div class="ficon fi-bookmark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 4h12v17l-6-4.5L6 21z"/></svg></div>
+        <h3>书签首页</h3>
+        <p>iOS 风格网格书签，多页翻页、长按拖动排序、文件夹收纳，常用的站点一步直达。</p>
+      </article>
+      <article class="fcard reveal d1">
+        <div class="ficon fi-tabs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="14" height="14" rx="3"/><path d="M8 6V5a2 2 0 012-2h9a2 2 0 012 2v9a2 2 0 01-2 2h-1"/></svg></div>
+        <h3>多标签 · 无痕</h3>
+        <p>标签预览卡片带截图，冷启动恢复上次会话，一键找回最近关闭，无痕模式随开随关。</p>
+      </article>
+      <article class="fcard reveal d2">
+        <div class="ficon fi-read"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg></div>
+        <h3>阅读模式</h3>
+        <p>自动提取正文与配图，过滤广告干扰，长文也可以安静读完。</p>
+      </article>
+      <article class="fcard reveal d3">
+        <div class="ficon fi-list"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg></div>
+        <h3>阅读清单</h3>
+        <p>稍后读分已读未读，一键转为书签，支持离线归档，地铁里也能读。</p>
+      </article>
+      <article class="fcard reveal">
+        <div class="ficon fi-down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l-4-4m4 4l4-4M4 20h16"/></svg></div>
+        <h3>下载中心</h3>
+        <p>系统下载器托管，进度、取消、重试、打开文件，一切尽在掌控。</p>
+      </article>
+      <article class="fcard reveal d1">
+        <div class="ficon fi-lang"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 5h10M8 3v2m3 8c-3-1-6-4-6-8M5 15c2.5 2 5.5 3.5 8 4"/><path d="M13 21l4.5-11L22 21m-7.4-3.4h5.8"/></svg></div>
+        <h3>网页翻译</h3>
+        <p>外文页面一键翻译为中文，地址栏旁随时唤起。</p>
+      </article>
+      <article class="fcard reveal d2">
+        <div class="ficon fi-find"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div>
+        <h3>页内查找</h3>
+        <p>关键词全文高亮定位，长页面里的那句话一秒现身。</p>
+      </article>
+      <article class="fcard reveal d3">
+        <div class="ficon fi-lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
+        <h3>数据自主</h3>
+        <p>历史、Cookie、缓存随心清理；书签走标准 Netscape HTML，与主流浏览器自由互通。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SIGNATURE SPOTLIGHTS ============ -->
+<section class="section" id="signature">
+  <div class="container">
+    <p class="eyebrow reveal">SIGNATURE · 惊喜细节</p>
+    <h2 class="display-md reveal d1">越用越懂你的<br>两个小心机。</h2>
+    <div class="spot-grid">
+      <article class="spot spot-indigo reveal">
+        <div class="spot-copy">
+          <h3>动态主题色</h3>
+          <p>浏览器状态栏颜色跟随网页 <code>theme-color</code> 自动变化。打开哪个站，就染上哪个站的颜色。</p>
+          <div class="swatch-row" aria-hidden="true">
+            <i style="--c:#4353C4"></i><i style="--c:#0FA36B"></i><i style="--c:#D9435B"></i><i style="--c:#B06AD4"></i><i style="--c:#D97A2B"></i>
+          </div>
+        </div>
+        <div class="spot-visual" aria-hidden="true">
+          <div class="mini-chrome"><span class="mc-dot"></span><span class="mc-url">yilan.app</span></div>
+          <div class="mini-bar anim-hue"></div>
+        </div>
+      </article>
+      <article class="spot spot-violet reveal d1">
+        <div class="spot-copy">
+          <h3>首页背景自定义</h3>
+          <p>预设渐变或相册图片，自动叠加暗色遮罩保证可读性。首页好不好看，你说了算。</p>
+          <div class="bg-chips" aria-hidden="true">
+            <span class="bg-chip g1"></span><span class="bg-chip g2"></span><span class="bg-chip g3"></span><span class="bg-chip g4"></span>
+          </div>
+        </div>
+        <div class="spot-visual spot-visual-grad g2" aria-hidden="true">
+          <div class="mini-grid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ WORKFLOW ============ -->
+<section class="section" id="workflow">
+  <div class="container">
+    <p class="eyebrow reveal">EXPERIENCE · 流畅闭环</p>
+    <h2 class="display-md reveal d1">从打开到收藏，<br>一步都不绕。</h2>
+    <ol class="flow">
+      <li class="flow-step reveal">
+        <span class="flow-num">01</span>
+        <h3>找到</h3>
+        <p>地址栏聚合本地书签、历史、标签与联网搜索建议，输一半就能到。</p>
+      </li>
+      <li class="flow-step reveal d1">
+        <span class="flow-num">02</span>
+        <h3>读透</h3>
+        <p>阅读模式净化正文，页内查找定位关键句，外文页面一键翻译。</p>
+      </li>
+      <li class="flow-step reveal d2">
+        <span class="flow-num">03</span>
+        <h3>收好</h3>
+        <p>收藏进书签或阅读清单，支持离线归档；标准 HTML 格式随时带走。</p>
+      </li>
+      <li class="flow-step reveal d3">
+        <span class="flow-num">04</span>
+        <h3>回来</h3>
+        <p>冷启动恢复上次会话，标签概览找回最近关闭，从不丢失浏览现场。</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ DOWNLOAD ============ -->
+<section class="section" id="download">
+  <div class="container">
+    <div class="dl-card reveal">
+      <div class="dl-glow" aria-hidden="true"></div>
+      <p class="eyebrow dl-eyebrow">DOWNLOAD · 立即获取</p>
+      <h2 class="display-md">现在，把它<br>装进口袋。</h2>
+      <p class="dl-sub">免费、免登录。Android 版现已开放下载，iOS 版正在路上。</p>
+      <div class="dl-actions">
+        <a class="btn btn-primary btn-lg" href="https://github.com/rexleimo/yilang-browser/releases/latest/download/yilan-browser-latest.apk" aria-label="下载 Android 版 APK">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M6 10c0-3.3 2.7-6 6-6s6 2.7 6 6v7a1 1 0 01-1 1H7a1 1 0 01-1-1v-7zm3.5-2a.9.9 0 100-1.8.9.9 0 000 1.8zm5 0a.9.9 0 100-1.8.9.9 0 000 1.8zM3.5 10.5c.8 0 1.5.7 1.5 1.5v4a1.5 1.5 0 01-3 0v-4c0-.8.7-1.5 1.5-1.5zm17 0c.8 0 1.5.7 1.5 1.5v4a1.5 1.5 0 01-3 0v-4c0-.8.7-1.5 1.5-1.5zM8.5 3.3l-1.3-2a.4.4 0 01.7-.4l1.3 2.1c.6-.2 1.2-.3 1.8-.3s1.3.1 1.8.3l1.3-2.1a.4.4 0 01.7.4l-1.3 2"/></svg>
+          下载 Android 版 APK
+        </a>
+        <span class="btn btn-secondary btn-lg btn-disabled" aria-disabled="true" title="iOS 版开发中，敬请期待">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M16.7 12.9c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-0.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3.1 2.4 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.6-1-2.7-3.9zM14.4 5.6c.7-.8 1.1-1.9 1-3.1-1 0-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.2-.6 2.9-1.4z"/></svg>
+          iOS 版 · 开发中
+        </span>
+      </div>
+      <p class="dl-note">链接始终指向最新版本 · <a class="dl-link" href="https://github.com/rexleimo/yilang-browser/releases" rel="noopener">查看历史版本</a> · iOS 版完成后会上线 TestFlight</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="section" id="faq">
+  <div class="container faq-wrap">
+    <p class="eyebrow reveal">FAQ · 常见问题</p>
+    <h2 class="display-md reveal d1">你想知道的，<br>都在这。</h2>
+    <div class="faq-list">
+      <details class="faq-row reveal">
+        <summary>我的书签和数据会上传到云端吗？<span class="faq-x" aria-hidden="true"></span></summary>
+        <div class="faq-body"><p>不会。书签、历史、阅读清单均保存在你的设备本地，无账号体系、无强制云同步；需要迁移时使用标准 Netscape HTML 导入导出，数据始终归你所有。</p></div>
+      </details>
+      <details class="faq-row reveal d1">
+        <summary>支持哪些平台和系统版本？<span class="faq-x" aria-hidden="true"></span></summary>
+        <div class="faq-body"><p>基于 Flutter 构建，iOS 使用 WKWebView、Android 使用系统 WebView。iOS 与 Android 双端同步迭代，安装包按 CPU 架构拆分，体积更轻。</p></div>
+      </details>
+      <details class="faq-row reveal d2">
+        <summary>怎么把旧浏览器的书签迁移过来？<span class="faq-x" aria-hidden="true"></span></summary>
+        <div class="faq-body"><p>在旧浏览器导出 Netscape 格式 HTML 书签文件，再在一览的设置中导入即可，文件夹结构完整保留；同样支持随时导出备份。</p></div>
+      </details>
+      <details class="faq-row reveal d3">
+        <summary>阅读清单离线归档是什么？<span class="faq-x" aria-hidden="true"></span></summary>
+        <div class="faq-body"><p>加入阅读清单的页面可离线归档净化副本，即使断网也能完整阅读正文与配图；已读未读状态一目了然，读完可一键转为书签。</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer">
+  <div class="container footer-grid">
+    <div class="footer-brand">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 100 100" width="20" height="20"><circle cx="50" cy="50" r="34" fill="none" stroke="currentColor" stroke-width="13"/><circle cx="80" cy="20" r="16" fill="currentColor"/></svg>
+        </span>
+        <span class="brand-name">一览 <em>Yilan</em></span>
+      </a>
+      <p class="footer-tag">iOS 原生风格的移动浏览器<br>以书签管理为核心体验。</p>
+    </div>
+    <nav class="footer-col" aria-label="产品">
+      <h4>产品</h4>
+      <a href="#features">功能特性</a>
+      <a href="#signature">设计亮点</a>
+      <a href="#download">下载 App</a>
+    </nav>
+    <nav class="footer-col" aria-label="支持">
+      <h4>支持</h4>
+      <a href="#faq">常见问题</a>
+      <a href="#faq">书签迁移</a>
+      <a href="#workflow">使用指南</a>
+    </nav>
+    <nav class="footer-col" aria-label="参与">
+      <h4>参与</h4>
+      <a href="#">问题反馈</a>
+      <a href="#">参与共建</a>
+      <a href="#">更新日志</a>
+    </nav>
+  </div>
+  <div class="container footer-base">
+    <p>© 2026 一览 Yilan · 打开网页，一览无余</p>
+    <p class="footer-lang">简体中文</p>
+  </div>
+</footer>
+
+<script src="script.js" defer></script>
+</body>
+</html>

@@ -210,6 +210,12 @@ jobs:
       - name: Pick arm64 APK
         run: mv apk-out/*arm64-v8a*release*.apk yilan-browser-${{ github.ref_name }}.apk
 
+      # 固定文件名副本：官网「下载 Android 版 APK」按钮直链
+      # https://github.com/rexleimo/yilang-browser/releases/latest/download/yilan-browser-latest.apk
+      # 永远指向最新 Release，无需随版本更新链接。
+      - name: Fixed-name APK for stable download link
+        run: cp yilan-browser-${{ github.ref_name }}.apk yilan-browser-latest.apk
+
       - uses: actions/download-artifact@v4
         with:
           name: yilan-ios-${{ github.ref_name }}
