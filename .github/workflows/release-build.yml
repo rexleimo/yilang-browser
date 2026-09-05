@@ -34,16 +34,15 @@ jobs:
 
       - run: flutter pub get
 
-      # 说明：正式签名 keystore 接入（key.properties + build.gradle 读取）
-      # 因 AGP 9 Kotlin DSL 兼容性问题暂缓；当前 APK 用 debug 密钥签名，
-      # 可安装体验。蒲公英分发 Android 包可直接上传。
-      - name: Build APK (release, debug-signed)
-        run: flutter build apk --release
+      # 按架构拆包：通用包内含 3 份引擎/运行时（~57MB），arm64 单架构
+      # 可降到 ~20MB；Release 只挂 arm64（现代真机全覆盖）。
+      - name: Build APK (release, debug-signed, split per ABI)
+        run: flutter build apk --release --split-per-abi
 
       - uses: actions/upload-artifact@v4
         with:
           name: yilan-android-${{ github.ref_name }}
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/*release*.apk
           if-no-files-found: error
 
   build-ios:
@@ -163,9 +162,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: yilan-android-${{ github.ref_name }}
+          path: apk-out
 
-      - name: Rename APK
-        run: mv app-release.apk yilan-browser-${{ github.ref_name }}.apk
+      - name: Pick arm64 APK
+        run: mv apk-out/*arm64-v8a*release*.apk yilan-browser-${{ github.ref_name }}.apk
 
       - uses: actions/download-artifact@v4
         with:
