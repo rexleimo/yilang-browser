@@ -148,7 +148,6 @@ class BrowserTabStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = context.browserTokens;
     return Container(
       height: 48,
       color: AppColors.brandStrong,
@@ -174,7 +173,8 @@ class BrowserTabStrip extends StatelessWidget {
             onPressed: onNewTab,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints.tightFor(width: 28, height: 34),
-            icon: Icon(Icons.add, color: tokens.addressBarForeground, size: 21),
+            // strip 底色恒为 brandStrong 深靛蓝，+ 用白色保证对比度。
+            icon: const Icon(Icons.add, color: Colors.white, size: 21),
           ),
         ],
       ),
