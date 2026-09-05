@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Firebase：处理 google-services.json，为 FlutterFire 插件提供配置资源。
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -15,8 +17,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.yilan.yilan_browser"
+        // 与 Firebase 项目注册的包名保持一致（google-services.json: com.rexai.yilan）。
+        applicationId = "com.rexai.yilan"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "180204699176",
+    "project_id": "yilan-b3359",
+    "storage_bucket": "yilan-b3359.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:180204699176:android:c3d24f005719f2b54fbf1d",
+        "android_client_info": {
+          "package_name": "com.rexai.yilan"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyByy2B0R8PJlgC-e2yhgAJfPldx1v-nUNk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

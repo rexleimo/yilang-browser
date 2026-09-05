@@ -1,3 +1,4 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +11,7 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _initFirebase();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.black,
     statusBarIconBrightness: Brightness.light,
@@ -24,6 +26,18 @@ Future<void> main() async {
   final downloadStore = await SharedPrefsDownloadTaskStore.create();
   final downloads = DownloadController(store: downloadStore);
   runApp(YilanApp(model: model, downloads: downloads));
+}
+
+/// 初始化 Firebase（Analytics / 内测分发数据）。
+///
+/// 配置缺失时（例如 fork 仓库没有 google-services.json /
+/// GoogleService-Info.plist）降级为无 Firebase 运行，不影响 App 其他功能。
+Future<void> _initFirebase() async {
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    debugPrint('Firebase init skipped: $e');
+  }
 }
 
 /// 一览 · Yilan —— 书签浏览器

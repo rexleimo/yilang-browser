@@ -45,6 +45,25 @@ jobs:
           path: build/app/outputs/flutter-apk/*release*.apk
           if-no-files-found: error
 
+      # Firebase 内测自动分发（可选）：仓库配置 FIREBASE_SERVICE_ACCOUNT_JSON
+      # Secret 后自动生效，未配置时本步骤自动跳过。
+      # 测试员组：Firebase 控制台 → App Distribution → 测试人员和组 → 建一个 "testers" 组。
+      - name: Detect Firebase secret
+        id: firebase
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$SA" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else echo "ready=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Upload APK to Firebase App Distribution
+        if: ${{ steps.firebase.outputs.ready == 'true' }}
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: 1:180204699176:android:c3d24f005719f2b54fbf1d
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          groups: testers
+          file: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+
   build-ios:
     name: iOS IPA (release)
     runs-on: macos-14
@@ -143,6 +162,30 @@ jobs:
           name: yilan-ios-${{ github.ref_name }}
           path: build/ios/ipa/*.ipa
           if-no-files-found: error
+
+      # Firebase 内测自动分发（可选）：仅签名 ipa 可装到设备，未签名包只归档不分发。
+      - name: Detect Firebase secret (iOS)
+        id: firebase_ios
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          ipa=$(ls build/ios/ipa/*.ipa 2>/dev/null | head -1 || true)
+          if [ -n "$SA" ] && [ -n "$ipa" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else echo "ready=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Normalize IPA name
+        if: ${{ steps.firebase_ios.outputs.ready == 'true' }}
+        run: |
+          ipa=$(ls build/ios/ipa/*.ipa | head -1)
+          cp "$ipa" build/ios/ipa/firebase-dist.ipa
+
+      - name: Upload IPA to Firebase App Distribution
+        if: ${{ steps.firebase_ios.outputs.ready == 'true' }}
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: 1:180204699176:ios:ee3fa5a69c9d7a924fbf1d
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          groups: testers
+          file: build/ios/ipa/firebase-dist.ipa
 
       - name: Cleanup keychain
         if: ${{ always() && steps.signing.outputs.ready == 'true' }}

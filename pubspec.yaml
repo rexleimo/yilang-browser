@@ -25,6 +25,8 @@ dependencies:
   # SQLite3 持久化（书签/设置/favicon 二进制缓存），自带原生库
   sqlite3: ^2.4.6
   sqlite3_flutter_libs: ^0.5.24
+  firebase_core: ^4.14.0
+  firebase_analytics: ^12.5.0
 
 dev_dependencies:
   flutter_test:
