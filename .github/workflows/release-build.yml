@@ -137,7 +137,7 @@ jobs:
           mkdir -p build/ios/ipa/Payload
           cp -r build/ios/archive/Runner.xcarchive/Products/Applications/*.app \
             build/ios/ipa/Payload/Runner.app
-          cd build/ios/ipa && zip -qry ../app-unsigned.ipa Payload
+          cd build/ios/ipa && zip -qry app-unsigned.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
