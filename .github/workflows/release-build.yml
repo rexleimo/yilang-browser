@@ -150,3 +150,35 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/yilan_adhoc.mobileprovision"
+
+  # 打 tag 时把两个包挂到 GitHub Release 页（Releases 页可直接下载）。
+  release:
+    name: Attach packages to GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [build-android, build-ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: yilan-android-${{ github.ref_name }}
+
+      - name: Rename APK
+        run: mv app-release.apk yilan-browser-${{ github.ref_name }}.apk
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: yilan-ios-${{ github.ref_name }}
+          path: ios-out
+
+      - name: Rename IPA
+        run: mv ios-out/*.ipa yilan-browser-${{ github.ref_name }}.ipa
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            yilan-browser-*.apk
+            yilan-browser-*.ipa
