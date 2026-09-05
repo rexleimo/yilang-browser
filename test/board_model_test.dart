@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yilan_browser/core/logic/board_model.dart';
 import 'package:yilan_browser/core/models/bookmark.dart';
 import 'package:yilan_browser/core/storage/bookmark_store.dart';
+import 'package:yilan_browser/theme/home_backgrounds.dart';
 
 class _FakeStore implements BookmarkStore {
   String? pagesRaw;
@@ -305,6 +306,45 @@ void main() {
       await m2.load();
       expect(m2.pages[0].map((e) => e.id).toList(),
           m.pages[0].map((e) => e.id).toList());
+    });
+  });
+
+  group('首页背景设置', () {
+    test('默认值：背景索引 0、无自定义图片', () {
+      final m = _model(_p4());
+      expect(m.settings.homeBackground, 0);
+      expect(m.settings.homeBackgroundPath, isNull);
+    });
+
+    test('背景索引与图片路径随 save/load 往返', () async {
+      final store = _FakeStore();
+      final m = BoardModel(store: store, seed: _p4());
+      m.settings.homeBackground = 3;
+      m.settings.homeBackgroundPath = '/data/bg.jpg';
+      await m.save();
+
+      final m2 = BoardModel(store: store, seed: []);
+      await m2.load();
+      expect(m2.settings.homeBackground, 3);
+      expect(m2.settings.homeBackgroundPath, '/data/bg.jpg');
+    });
+
+    test('旧数据缺字段 → 回落默认值', () async {
+      final store = _FakeStore();
+      store.settings = {'se': 1};
+      final m = BoardModel(store: store, seed: _p4());
+      await m.load();
+      expect(m.settings.homeBackground, 0);
+      expect(m.settings.homeBackgroundPath, isNull);
+    });
+
+    test('预设解析：越界索引回落默认预设', () {
+      expect(identical(resolveHomeBackground(-1), homeBackgroundPresets[0]),
+          isTrue);
+      expect(identical(resolveHomeBackground(99), homeBackgroundPresets[0]),
+          isTrue);
+      expect(identical(resolveHomeBackground(2), homeBackgroundPresets[2]),
+          isTrue);
     });
   });
 

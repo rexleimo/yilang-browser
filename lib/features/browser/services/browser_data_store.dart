@@ -39,6 +39,7 @@ class ReadingItem {
     this.offlineContentId,
     this.offlineHtmlPath,
     this.offlineResourcesPath,
+    this.readerHtmlPath,
   });
 
   final String title;
@@ -54,22 +55,21 @@ class ReadingItem {
   final String? offlineHtmlPath;
   final String? offlineResourcesPath;
 
+  /// 阅读模式净化副本（保存时由页面内提取脚本生成）。
+  final String? readerHtmlPath;
+
   bool get isUnread => readAt == null;
 
   bool get hasOfflineCopy =>
       offlineHtmlPath != null && offlineHtmlPath!.isNotEmpty;
 
-  ReadingItem markRead(DateTime when) => ReadingItem(
-        title: title,
-        url: url,
-        savedAt: savedAt,
-        excerpt: excerpt,
-        readAt: when,
-        offlineContentId: offlineContentId,
-        offlineHtmlPath: offlineHtmlPath,
-        offlineResourcesPath: offlineResourcesPath,
-      );
+  bool get hasReaderCopy =>
+      readerHtmlPath != null && readerHtmlPath!.isNotEmpty;
 
+  ReadingItem markRead(DateTime when) =>
+      copyWith(readAt: when);
+
+  /// 复位为未读（copyWith 的 null 是「保留」，无法清字段，这里手动重建）。
   ReadingItem markUnread() => ReadingItem(
         title: title,
         url: url,
@@ -78,6 +78,7 @@ class ReadingItem {
         offlineContentId: offlineContentId,
         offlineHtmlPath: offlineHtmlPath,
         offlineResourcesPath: offlineResourcesPath,
+        readerHtmlPath: readerHtmlPath,
       );
 
   /// 摘掉离线副本引用（副本文件被清除后，条目退回联网打开）。
@@ -87,6 +88,63 @@ class ReadingItem {
         savedAt: savedAt,
         excerpt: excerpt,
         readAt: readAt,
+        readerHtmlPath: readerHtmlPath,
+      );
+
+  /// 只摘离线引用，阅读模式副本保留（两者独立失效）。
+  ReadingItem stripOfflineRefs() => ReadingItem(
+        title: title,
+        url: url,
+        savedAt: savedAt,
+        excerpt: excerpt,
+        readAt: readAt,
+        readerHtmlPath: readerHtmlPath,
+      );
+
+  /// 只摘阅读模式副本引用，离线副本保留。
+  ReadingItem stripReaderCopy() => ReadingItem(
+        title: title,
+        url: url,
+        savedAt: savedAt,
+        excerpt: excerpt,
+        readAt: readAt,
+        offlineContentId: offlineContentId,
+        offlineHtmlPath: offlineHtmlPath,
+        offlineResourcesPath: offlineResourcesPath,
+      );
+
+  /// 回填阅读模式副本路径（生成成功后调用）。
+  ReadingItem withReaderCopy(String path) => ReadingItem(
+        title: title,
+        url: url,
+        savedAt: savedAt,
+        excerpt: excerpt,
+        readAt: readAt,
+        offlineContentId: offlineContentId,
+        offlineHtmlPath: offlineHtmlPath,
+        offlineResourcesPath: offlineResourcesPath,
+        readerHtmlPath: path,
+      );
+
+  /// 可选字段写法上用「传 null = 保留」；需要清空字段时用上面的
+  /// strip 系列方法，避免 copyWith(null) 语义歧义。
+  ReadingItem copyWith({
+    String? title,
+    String? url,
+    DateTime? savedAt,
+    String? excerpt,
+    DateTime? readAt,
+  }) =>
+      ReadingItem(
+        title: title ?? this.title,
+        url: url ?? this.url,
+        savedAt: savedAt ?? this.savedAt,
+        excerpt: excerpt ?? this.excerpt,
+        readAt: readAt ?? this.readAt,
+        offlineContentId: offlineContentId,
+        offlineHtmlPath: offlineHtmlPath,
+        offlineResourcesPath: offlineResourcesPath,
+        readerHtmlPath: readerHtmlPath,
       );
 
   Map<String, Object?> toJson() => {
@@ -99,6 +157,7 @@ class ReadingItem {
         if (offlineHtmlPath != null) 'offlineHtmlPath': offlineHtmlPath,
         if (offlineResourcesPath != null)
           'offlineResourcesPath': offlineResourcesPath,
+        if (readerHtmlPath != null) 'readerHtmlPath': readerHtmlPath,
       };
 
   factory ReadingItem.fromJson(Map<String, Object?> json) => ReadingItem(
@@ -116,6 +175,7 @@ class ReadingItem {
         offlineResourcesPath: _nullableString(
           json['offlineResourcesPath'] ?? json['resourceDirectoryPath'],
         ),
+        readerHtmlPath: _nullableString(json['readerHtmlPath']),
       );
 }
 
@@ -481,24 +541,31 @@ class BrowserDataStore {
     var stripped = 0;
     final cleaned = <ReadingItem>[];
     for (final item in items) {
-      final exists = !item.hasOfflineCopy ||
+      final offlineExists = !item.hasOfflineCopy ||
           (item.offlineHtmlPath != null &&
               File(item.offlineHtmlPath!).existsSync());
-      if (exists) {
+      final readerExists = !item.hasReaderCopy ||
+          (item.readerHtmlPath != null &&
+              File(item.readerHtmlPath!).existsSync());
+      if (offlineExists && readerExists) {
         cleaned.add(item);
       } else {
-        stripped++;
-        cleaned.add(ReadingItem(
-          title: item.title,
-          url: item.url,
-          savedAt: item.savedAt,
-          excerpt: item.excerpt,
-          readAt: item.readAt,
-        ));
+        // 离线与阅读副本独立失效、独立摘除。
+        var next = item;
+        if (!offlineExists) {
+          next = next.stripOfflineRefs();
+          stripped++;
+        }
+        if (!readerExists) {
+          next = next.stripReaderCopy();
+          stripped++;
+        }
+        cleaned.add(next);
       }
     }
     if (stripped > 0) await saveReadingList(cleaned);
-    return pruned;
+    // 清理掉的副本总数 = 失效离线元数据 + 摘除的条目引用（含阅读副本）。
+    return pruned + stripped;
   }
 
   Future<void> clearAll() async {

@@ -181,6 +181,7 @@ void main() {
         '在页面中查找',
         '保存页面截图',
         '分享页面',
+        '阅读模式',
       ]) {
         expect(find.text(label), findsOneWidget, reason: label);
       }

@@ -9,11 +9,13 @@ import '../../core/metrics.dart';
 import '../../core/models/bookmark.dart';
 import '../../core/widgets/browser_chrome.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/home_backgrounds.dart';
 import '../browser/browser.dart';
 import 'widgets/bookmark_tile.dart';
 import 'widgets/board_context_menu.dart';
 import 'widgets/board_drag_ghost.dart';
 import 'widgets/folder_page.dart';
+import 'widgets/home_background_canvas.dart';
 import 'widgets/home_settings_sheet.dart';
 
 /// 书签页：网格 / 翻页 / 长按拖动 / 停留合并 / 多选组拖 / 双指切换
@@ -885,16 +887,22 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
           } else if (_jiggleCtrl.isAnimating) {
             _jiggleCtrl.stop();
           }
+          final bgPreset = resolveHomeBackground(m.settings.homeBackground);
           return AnnotatedRegion<SystemUiOverlayStyle>(
-            value: const SystemUiOverlayStyle(
+            value: SystemUiOverlayStyle(
               statusBarColor: Colors.black,
               statusBarIconBrightness: Brightness.light,
               statusBarBrightness: Brightness.dark,
-              systemNavigationBarColor: Color(0xFFF5F7FB),
-              systemNavigationBarIconBrightness: Brightness.dark,
+              systemNavigationBarColor: bgPreset.navigationBarColor,
+              systemNavigationBarIconBrightness:
+                  bgPreset.lightNavigationBarIcons
+                      ? Brightness.light
+                      : Brightness.dark,
             ),
-            child: ColoredBox(
-              color: browser.chromeBackground,
+            child: HomeBackgroundCanvas(
+              preset: bgPreset,
+              imagePath: m.settings.homeBackgroundPath,
+              fallbackColor: browser.chromeBackground,
               child: Column(
                 children: [
                   if (MediaQuery.paddingOf(context).top > 0)
@@ -927,16 +935,16 @@ class _BookmarkDesktopPageState extends State<BookmarkDesktopPage>
                               onClose: _closeSearch,
                             ),
                             Expanded(
-                              child: ColoredBox(
-                                color: browser.webViewBackground,
-                                child: Column(
-                                  children: [
-                                    _buildHeader(),
-                                    Expanded(child: _buildBoard()),
-                                    _buildDots(),
-                                  ],
-                                ),
+                              child: Column(
+                                children: [
+                                  _buildHeader(),
+                                  Expanded(child: _buildBoard()),
+                                  _buildDots(),
+                                ],
                               ),
+                              // 不铺底色：让 HomeBackgroundCanvas（纯色/渐变/
+                              // 自定义壁纸）透出来。默认预设时画布兜底
+                              // chromeBackground，与原 webViewBackground 同色。
                             ),
                             SizedBox(
                               height: 72 + MediaQuery.paddingOf(context).bottom,

@@ -11,6 +11,7 @@ class CollectionEntry {
     required this.time,
     this.excerpt = '',
     this.offlineHtmlPath,
+    this.readerHtmlPath,
     this.readAt,
   });
 
@@ -20,11 +21,17 @@ class CollectionEntry {
   final String excerpt;
   final String? offlineHtmlPath;
 
+  /// 阅读模式净化副本路径（仅阅读清单使用）。
+  final String? readerHtmlPath;
+
   /// 阅读完成时间；null 表示未读（仅阅读清单使用）。
   final DateTime? readAt;
 
   bool get hasOfflineCopy =>
       offlineHtmlPath != null && offlineHtmlPath!.isNotEmpty;
+
+  bool get hasReaderCopy =>
+      readerHtmlPath != null && readerHtmlPath!.isNotEmpty;
 
   bool get isUnread => readAt == null;
 }

@@ -10,8 +10,10 @@ import '../../core/logic/board_model.dart';
 import '../../core/logic/search_engines.dart';
 import '../../core/storage/bookmark_codec.dart';
 import '../../core/widgets/browser_chrome.dart';
+import '../../core/widgets/home_background_picker.dart';
 import '../../core/widgets/ui_kit.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/home_backgrounds.dart';
 import '../browser/services/browser_data_store.dart';
 
 /// Application settings — 系统式分层设置：分组卡片 + 子页推进（← 返回 / X 关闭），
@@ -69,7 +71,8 @@ class _SettingsPageState extends State<SettingsPage> {
             UiTile(
               icon: Icons.palette_outlined,
               title: '外观',
-              value: s.darkMode ? '深色' : '浅色',
+              value: '${s.darkMode ? '深色' : '浅色'} · '
+                  '${resolveHomeBackground(s.homeBackground).name}',
               onTap: () => _push(context, _AppearanceSubPage(model)),
             ),
           if (hit('桌面版'))
@@ -496,6 +499,15 @@ class _AppearanceSubPage extends StatelessWidget {
       builder: (context, _) {
         final s = model.settings;
         return _SubPageScaffold(title: '外观', children: [
+          const UiSectionLabel('首页背景'),
+          UiCard(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+              child: HomeBackgroundPicker(model: model),
+            ),
+          ]),
+          // 与主设置页分组节奏一致：卡片后 26px 再接下一个分组标签。
+          const SizedBox(height: 26),
           const UiSectionLabel('常规'),
           UiCard(children: [
             UiTile(

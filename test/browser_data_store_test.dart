@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -303,6 +304,85 @@ void main() {
       expect(reading.single.excerpt, 'legacy excerpt');
       expect(reading.single.offlineHtmlPath, 'legacy/page.html');
       expect(reading.single.offlineResourcesPath, 'legacy/resources');
+    });
+
+    test('阅读清单 readerHtmlPath 随 save/load 往返', () async {
+      final store = BrowserDataStore();
+      await store.addReadingItem(ReadingItem(
+        title: 'With reader copy',
+        url: 'https://read.example/reader',
+        savedAt: DateTime.utc(2025, 5, 1),
+        readerHtmlPath: '/docs/reader_1.html',
+      ));
+      await store.addReadingItem(ReadingItem(
+        title: 'Without reader copy',
+        url: 'https://read.example/plain',
+        savedAt: DateTime.utc(2025, 5, 2),
+      ));
+
+      final loaded = await BrowserDataStore().loadReadingList();
+      expect(loaded, hasLength(2));
+      expect(
+        loaded.firstWhere((i) => i.url == 'https://read.example/reader').readerHtmlPath,
+        '/docs/reader_1.html',
+      );
+      expect(
+        loaded.firstWhere((i) => i.url == 'https://read.example/plain').readerHtmlPath,
+        isNull,
+      );
+    });
+
+    test('prune 摘掉失效引用：离线与阅读副本各自独立判断', () async {
+      final tmp = await Directory.systemTemp.createTemp('yilan_prune_test');
+      addTearDown(() => tmp.delete(recursive: true));
+      final aliveOffline = File('${tmp.path}/alive_offline.html');
+      final aliveReader = File('${tmp.path}/alive_reader.html');
+      await aliveOffline.writeAsString('<html>offline</html>');
+      await aliveReader.writeAsString('<html>reader</html>');
+
+      final store = BrowserDataStore();
+      await store.saveReadingList([
+        // 全部有效：原样保留
+        ReadingItem(
+          title: 'All alive',
+          url: 'https://a.example',
+          savedAt: DateTime.utc(2025, 6, 1),
+          offlineHtmlPath: aliveOffline.path,
+          readerHtmlPath: aliveReader.path,
+        ),
+        // 离线失效但阅读副本有效：只摘离线引用
+        ReadingItem(
+          title: 'Offline dead, reader alive',
+          url: 'https://b.example',
+          savedAt: DateTime.utc(2025, 6, 2),
+          offlineHtmlPath: '${tmp.path}/missing_offline.html',
+          readerHtmlPath: aliveReader.path,
+        ),
+        // 阅读副本失效：只摘阅读引用
+        ReadingItem(
+          title: 'Reader dead',
+          url: 'https://c.example',
+          savedAt: DateTime.utc(2025, 6, 3),
+          offlineHtmlPath: aliveOffline.path,
+          readerHtmlPath: '${tmp.path}/missing_reader.html',
+        ),
+      ]);
+
+      final pruned = await store.pruneMissingOfflineContent();
+      expect(pruned, 2);
+
+      final items = await store.loadReadingList();
+      final a = items.firstWhere((i) => i.url == 'https://a.example');
+      expect(a.hasOfflineCopy, isTrue);
+      expect(a.hasReaderCopy, isTrue);
+
+      final b = items.firstWhere((i) => i.url == 'https://b.example');
+      expect(b.hasOfflineCopy, isFalse);
+      expect(b.hasReaderCopy, isTrue);
+
+      final c = items.firstWhere((i) => i.url == 'https://c.example');
+      expect(c.hasOfflineCopy, isTrue);
+      expect(c.hasReaderCopy, isFalse);
     });
 
     test('clearAll removes all browser collections', () async {

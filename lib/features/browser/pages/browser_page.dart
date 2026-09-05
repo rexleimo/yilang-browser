@@ -27,8 +27,10 @@ import 'browser_history.dart';
 import '../logic/browser_javascript.dart';
 import '../logic/browser_navigation.dart';
 import '../logic/ad_blocker.dart';
+import '../logic/reader_article.dart';
 import '../services/offline_archive_service.dart';
 import '../services/screenshot_service.dart';
+import 'reader_page.dart';
 
 /// Browser page with a normal new-tab flow, tabs, and private tabs.
 class BrowserPage extends StatefulWidget {
@@ -1674,6 +1676,64 @@ class BrowserPageState extends State<BrowserPage> {
 
     // Saving should be instant; the offline copy is filled in afterwards.
     unawaited(_archiveReadingItem(entry));
+    // 阅读模式净化副本同样异步补齐（提取当前已加载的 DOM，质量最高）。
+    unawaited(_captureReaderCopy(entry));
+  }
+
+  /// 阅读模式：提取当前页正文并在独立阅读页渲染。
+  /// 提取失败（无正文/非文章页）时提示并留在原页。
+  Future<void> _openReaderMode() async {
+    final tab = _currentTab;
+    if (tab.private || tab.url.isEmpty) return;
+    Object? result;
+    try {
+      result =
+          await tab.controller?.runJavaScriptReturningResult(
+        BrowserJavaScript.extractArticle,
+      );
+    } catch (_) {}
+    final article = ReaderArticle.fromJsResult(result);
+    if (!mounted) return;
+    if (article == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('此页面暂不适合阅读模式')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReaderPage(article: article),
+      ),
+    );
+  }
+
+  /// 保存进阅读清单时异步生成阅读模式副本：
+  /// 在页面尚未离开时提取 DOM（结构最完整），写盘后回填 readerHtmlPath。
+  Future<void> _captureReaderCopy(ReadingItem entry) async {
+    Object? result;
+    try {
+      result =
+          await _currentTab.controller?.runJavaScriptReturningResult(
+        BrowserJavaScript.extractArticle,
+      );
+    } catch (_) {
+      return;
+    }
+    final article = ReaderArticle.fromJsResult(result);
+    if (article == null) return;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File(
+          '${directory.path}/reader_${DateTime.now().microsecondsSinceEpoch}.html');
+      await file.writeAsString(readerHtmlDocument(article), flush: true);
+      final index = _readingList.indexWhere((item) => item.url == entry.url);
+      if (index < 0) return;
+      _readingList[index] = _readingList[index].withReaderCopy(file.path);
+      await _dataStore.saveReadingList(_readingList);
+      if (mounted) setState(() {});
+    } catch (_) {
+      // 阅读副本生成失败不影响条目本身（在线/离线路径仍可用）。
+    }
   }
 
   Future<void> _archiveReadingItem(ReadingItem entry) async {
@@ -1730,6 +1790,7 @@ class BrowserPageState extends State<BrowserPage> {
                   time: item.savedAt,
                   excerpt: item.excerpt,
                   offlineHtmlPath: item.offlineHtmlPath,
+                  readerHtmlPath: item.readerHtmlPath,
                   readAt: item.readAt,
                 ))
             .toList();
@@ -1814,9 +1875,34 @@ class BrowserPageState extends State<BrowserPage> {
     });
   }
 
-  /// Reads a saved offline copy in a dedicated tab so the live page's
+  /// Reads a saved copy in a dedicated tab so the live page's
   /// browsing history stays untouched.
+  /// 优先阅读模式净化副本（干净省流），缺失时回落原始离线快照。
   void _openOfflineCopy(CollectionEntry entry) {
+    final readerPath = entry.readerHtmlPath;
+    final readerFile = (readerPath != null && readerPath.isNotEmpty)
+        ? File(readerPath)
+        : null;
+    if (readerFile != null && readerFile.existsSync()) {
+      final tab = _BrowserTab(url: entry.url, private: false)
+        ..title = entry.title.isEmpty ? '阅读模式' : entry.title;
+      final controller = _createController(tab)
+        ..setBackgroundColor(const Color(0xFFFBFBF8));
+      tab.controller = controller;
+      controller.loadFile(readerFile.path);
+      _tabs.add(tab);
+      _active = _tabs.length - 1;
+      _address.text = entry.url;
+      setState(() {
+        _showingTabs = false;
+        _showingAddressEditor = false;
+      });
+      _notifyTabCount();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已用阅读模式打开保存的文章')),
+      );
+      return;
+    }
     final file = File(entry.offlineHtmlPath!);
     if (!file.existsSync()) {
       _go(entry.url);
@@ -1866,6 +1952,12 @@ class BrowserPageState extends State<BrowserPage> {
               onTap: () {
             Navigator.pop(context);
             _findInPage();
+          }),
+          menuTile(context, icon: Icons.chrome_reader_mode_outlined,
+              title: '阅读模式',
+              subtitle: '只保留正文与图片', onTap: () {
+            Navigator.pop(context);
+            _openReaderMode();
           }),
           menuTile(context,
               icon: Icons.screenshot_outlined,

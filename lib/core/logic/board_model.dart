@@ -70,6 +70,12 @@ class Settings {
   /// 全部标签页以桌面版 UA 请求网页。
   bool desktopUA = false;
 
+  /// 首页背景：`home_backgrounds.dart` 预设列表的索引。
+  int homeBackground = 0;
+
+  /// 首页自定义背景图片路径（仅当背景预设为「自定义图片」时使用）。
+  String? homeBackgroundPath;
+
   static const List<String> engines = SearchEngines.names;
 
   Map<String, Object?> toJson() => {
@@ -87,6 +93,8 @@ class Settings {
         'srm': suggestRemote,
         'rse': restoreSession,
         'dua': desktopUA,
+        'hbg': homeBackground,
+        'hbgp': homeBackgroundPath,
       };
 
   factory Settings.fromJson(Map<String, Object?> j) => Settings()
@@ -103,7 +111,9 @@ class Settings {
     ..suggestTabs = (j['stb'] as bool?) ?? true
     ..suggestRemote = (j['srm'] as bool?) ?? true
     ..restoreSession = (j['rse'] as bool?) ?? true
-    ..desktopUA = (j['dua'] as bool?) ?? false;
+    ..desktopUA = (j['dua'] as bool?) ?? false
+    ..homeBackground = (j['hbg'] as num?)?.toInt() ?? 0
+    ..homeBackgroundPath = j['hbgp'] as String?;
 
   Settings({
     this.searchEngineIndex = 1,
@@ -120,6 +130,8 @@ class Settings {
     this.suggestRemote = true,
     this.restoreSession = true,
     this.desktopUA = false,
+    this.homeBackground = 0,
+    this.homeBackgroundPath,
   });
 }
 

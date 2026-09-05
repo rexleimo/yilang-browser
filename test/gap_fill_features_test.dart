@@ -146,7 +146,8 @@ void main() {
         ),
       ]);
       final pruned = await store.pruneMissingOfflineContent();
-      expect(pruned, 1);
+      // 返回值 = 失效离线元数据(1) + 摘除的条目引用(1)。
+      expect(pruned, 2);
       final items = await store.loadReadingList();
       expect(items.single.hasOfflineCopy, isFalse);
       expect((await store.loadOfflineContent()), isEmpty);
