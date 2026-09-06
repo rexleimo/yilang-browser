@@ -62,3 +62,7 @@ android/build/
 /video/
 design/logo/*.png
 design/logo/preview.*
+
+# 视频制作包：本地依赖与 npm 缓存不入库
+video/ppt/node_modules/
+video/ppt/.npmcache/
