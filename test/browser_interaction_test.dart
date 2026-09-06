@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yilan_browser/features/browser/browser.dart';
@@ -525,6 +527,155 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('tab strip sync', () {
+    testWidgets('external tab selection skips blank placeholders',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await _pumpBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      state.openAddress('https://a.example');
+      await tester.pump();
+      // 无痕/隐私空间占位标签真实存在但不在任何条上显示。
+      state.openVaultTab();
+      await tester.pump();
+      state.openInNewTab('https://b.example');
+      await tester.pump();
+      expect(state.tabUrls,
+          ['https://a.example', '', 'https://b.example']);
+
+      // 主页条的可视下标（过滤占位后）：1 → b.example，0 → a.example。
+      // 旧实现直接拿可视下标索引 _tabs，会错选到不可见的占位页。
+      state.selectExternalTab(1);
+      await tester.pump();
+      expect(state.activeTabUrl, 'https://b.example');
+
+      state.selectExternalTab(0);
+      await tester.pump();
+      expect(state.activeTabUrl, 'https://a.example');
+
+      state.selectExternalTab(99);
+      await tester.pump();
+      expect(state.activeTabUrl, 'https://a.example');
+    });
+
+    testWidgets('promoting a placeholder notifies Home immediately',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      var summaries = <BrowserTabSummary>[];
+      var notifyCount = 0;
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: BrowserPage(
+            model: _model(),
+            onTabsChanged: (list) {
+              notifyCount++;
+              summaries = list;
+            },
+          ),
+        ),
+      ));
+      await tester.pump();
+      // 启动占位标签不出现：0 个摘要。
+      expect(summaries, isEmpty);
+
+      // 测试环境没有 WebView 平台实现，onPageStarted 永远不会触发 ——
+      // 与线上「导航被广告拦截/下载接管」的情形一致：_go 必须自己补推送，
+      // 否则主页条永远少一个标签。
+      tester
+          .state<BrowserPageState>(find.byType(BrowserPage))
+          .openAddress('https://a.example');
+      await tester.pump();
+      expect(notifyCount, greaterThan(0));
+      expect(summaries.length, 1);
+    });
+
+    testWidgets('incognito menu reuses the private placeholder',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await _pumpMobileBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      await _tapMenuEntry(tester, '新建无痕标签页');
+      await tester.pump();
+      expect(state.tabCount, 2); // 启动占位 + 无痕占位
+
+      // 再开一次必须复用：追加会让占位越积越多，主页条下标整体错位。
+      await _tapMenuEntry(tester, '新建无痕标签页');
+      await tester.pump();
+      expect(state.tabCount, 2);
+      expect(state.tabPrivateFlags, [false, true]);
+    });
+
+    testWidgets('session snapshot maps active index onto saved tabs',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await _pumpBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      state.openAddress('https://a.example');
+      await tester.pump();
+      state.openInNewTab('https://private.example', private: true);
+      await tester.pump(); // 当前激活：无痕标签（不落盘）
+      state.selectExternalTab(0);
+      await tester.pump();
+
+      // 触发会话保存：映射修正前存的是含占位的原始下标，恢复后会错位。
+      state.selectExternalTab(1); // 回到无痕标签（激活位被过滤）
+      await tester.pump();
+      // 手动推进防抖窗口。
+      await tester.pump(const Duration(milliseconds: 900));
+
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('yilan_browser_session_v1');
+      expect(raw, isNotNull);
+      final saved = jsonDecode(raw!) as Map<String, Object?>;
+      expect((saved['tabs'] as List).length, 1);
+      expect((saved['tabs'] as List).first['url'], 'https://a.example');
+      expect(saved['active'], 0);
+    });
+
+    testWidgets('lifecycle pause flushes the session save immediately',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await _pumpBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      state.openAddress('https://flush.example');
+      await tester.pump();
+
+      // 不推进 800ms 防抖：退后台那一刻必须已经落盘。
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('yilan_browser_session_v1');
+      expect(raw, isNotNull);
+      expect(raw, contains('https://flush.example'));
+    });
+
+    testWidgets('cold start restores the saved session', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'yilan_browser_session_v1':
+            '{"active":0,"savedAt":"2026-01-01T00:00:00.000Z","tabs":[{"url":"https://r1.example","title":"R1"},{"url":"https://r2.example","title":"R2"}]}',
+      });
+      await _pumpBrowser(tester, _model());
+      await tester.pump();
+      await tester.pump();
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      expect(state.tabUrls, ['https://r1.example', 'https://r2.example']);
+
+      // 恢复完成后防抖保存不能把会话清掉：推进防抖窗口后仍是两个标签。
+      await tester.pump(const Duration(milliseconds: 900));
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('yilan_browser_session_v1');
+      expect(raw, isNotNull);
+      expect(((jsonDecode(raw!) as Map)['tabs'] as List).length, 2);
     });
   });
 }

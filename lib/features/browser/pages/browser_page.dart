@@ -114,7 +114,8 @@ class BrowserTabSummary {
   final String? faviconUrl;
 }
 
-class BrowserPageState extends State<BrowserPage> {
+class BrowserPageState extends State<BrowserPage>
+    with WidgetsBindingObserver {
   static const MethodChannel _androidBrowser =
       MethodChannel('com.yilan.yilan_browser/android_browser');
   final List<_BrowserTab> _tabs = [];
@@ -146,6 +147,10 @@ class BrowserPageState extends State<BrowserPage> {
 
   /// 会话持久化的防抖计时器（标签页频繁变动时合并写盘）。
   Timer? _sessionSaveTimer;
+
+  /// 冷启动的会话恢复尚未落定：期间禁止写会话，防止启动占位标签
+  /// 触发的空快照把磁盘上还没读完的上次会话删掉。
+  bool _sessionRestorePending = true;
 
   /// 联网搜索建议：输入防抖 + 最近一次结果。
   Timer? _suggestDebounce;
@@ -354,15 +359,28 @@ class BrowserPageState extends State<BrowserPage> {
 
   int get _realTabCount => _tabs.where((t) => !_isBlank(t)).length;
 
-  /// Switches to [index] from an external surface (the Home tab strip).
-  void selectExternalTab(int index) {
+  /// Switches to the [visibleIndex]-th real tab from an external surface (the
+  /// Home tab strip). Home's chips are built from summaries that skip blank
+  /// placeholders, so the visible position must be mapped back onto the full
+  /// `_tabs` list — using it as a raw index selects the wrong tab whenever a
+  /// blank private/vault placeholder sits anywhere before the target.
+  void selectExternalTab(int visibleIndex) {
     if (!mounted) return;
-    _selectTab(index);
+    var seen = -1;
+    for (var i = 0; i < _tabs.length; i++) {
+      if (_isBlank(_tabs[i])) continue;
+      seen++;
+      if (seen == visibleIndex) {
+        _selectTab(i);
+        return;
+      }
+    }
   }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _appliedDesktopUA = widget.model.settings.desktopUA;
     widget.model.addListener(_onSettingsChanged);
     unawaited(_adLog.load());
@@ -378,6 +396,9 @@ class BrowserPageState extends State<BrowserPage> {
         private: widget.model.settings.incognito, deferController: true);
     if (raw.isEmpty) {
       unawaited(_restoreSession());
+    } else {
+      // 带 initialUrl 启动不跑恢复：解除保存闸门。
+      _sessionRestorePending = false;
     }
     _loadBrowserData();
     _notifyTabCount();
@@ -386,37 +407,78 @@ class BrowserPageState extends State<BrowserPage> {
 
   /// 冷启动恢复上次退出前的标签页集合（不含无痕标签页）。
   Future<void> _restoreSession() async {
-    if (!widget.model.settings.restoreSession) return;
+    if (!widget.model.settings.restoreSession) {
+      _sessionRestorePending = false;
+      return;
+    }
     final session = await _dataStore.loadSession();
-    if (!mounted || session == null) return;
-    // 占位标签页已无用：恢复会话时直接替换掉。
+    if (!mounted) return;
+    if (session == null) {
+      _sessionRestorePending = false;
+      return;
+    }
+    // 冷启动竞态：读盘期间用户可能已经用占位标签打开了网页。已打开的
+    // 标签保留，恢复条目按 URL 去重，避免同一页面出现两个标签。
+    final userNavigated = !_isBlank(_currentTab);
     _tabs.removeWhere(_isBlank);
     for (final entry in session.tabs) {
+      if (_tabs.indexWhere((tab) => tab.url == entry.url) >= 0) continue;
       _addTab(entry.url, private: false);
       if (entry.title.isNotEmpty) _tabs.last.title = entry.title;
     }
+    _sessionRestorePending = false;
     if (_tabs.isEmpty) {
       _addTab('', private: false);
       return;
     }
     setState(() {
-      _active = session.activeIndex.clamp(0, _tabs.length - 1);
+      // 用户恢复期间已经先打开了网页：留在用户的标签上，别跳回快照激活位。
+      _active = userNavigated
+          ? 0
+          : session.activeIndex.clamp(0, _tabs.length - 1);
       _address.text = _currentTab.url;
     });
     _notifyTabCount();
+    _scheduleSessionSave();
+  }
+
+  /// 当前会话快照：过滤空白占位与无痕标签，并返回过滤后坐标系的激活下标。
+  /// 激活标签被过滤掉时（无痕/占位在前台）回落到 0，恢复时落在第一个标签。
+  (List<Map<String, Object?>>, int) _sessionSnapshot() {
+    final tabs = <Map<String, Object?>>[];
+    var active = 0;
+    for (var i = 0; i < _tabs.length; i++) {
+      final tab = _tabs[i];
+      if (_isBlank(tab) || tab.private) continue;
+      if (i == _active) active = tabs.length;
+      tabs.add({'url': tab.url, 'title': tab.title});
+    }
+    return (tabs, active);
   }
 
   /// 标签集合或当前页变化后保存会话快照（防抖合并写入）。
   void _scheduleSessionSave() {
+    if (_sessionRestorePending) return;
     _sessionSaveTimer?.cancel();
     _sessionSaveTimer = Timer(const Duration(milliseconds: 800), () {
-      final tabs = [
-        for (final tab in _tabs)
-          if (!_isBlank(tab) && !tab.private)
-            {'url': tab.url, 'title': tab.title},
-      ];
-      _dataStore.saveSession(tabs, _active);
+      final (tabs, active) = _sessionSnapshot();
+      _dataStore.saveSession(tabs, active);
     });
+  }
+
+  /// 跳过防抖立即落盘：退后台、页面销毁等「进程随时可能被杀」的时刻调用。
+  void _flushSessionSave() {
+    _sessionSaveTimer?.cancel();
+    if (_sessionRestorePending) return;
+    final (tabs, active) = _sessionSnapshot();
+    unawaited(_dataStore.saveSession(tabs, active));
+  }
+
+  /// 退后台/系统回收前把会话立刻写盘。Android 厂商 ROM 随时可能杀掉后台
+  /// 进程，防抖窗口内（800ms）的变更会随进程一起消失。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _flushSessionSave();
   }
 
   /// 设置里的开关变化（目前关注桌面版 UA）应用到所有标签页。
@@ -1336,6 +1398,9 @@ class BrowserPageState extends State<BrowserPage> {
       tab.controller!.loadRequest(Uri.parse(url));
     }
     setState(() {});
+    // 占位标签可能就此转正：立即同步给 Home，不等 onPageStarted 兜底 ——
+    // 被广告拦截或下载接管的导航永远等不到它，主页条会永久少一个标签。
+    _notifyTabCount();
   }
 
   /// 用指定引擎执行"本次搜索"（地址栏下拉的引擎快切）。
@@ -2010,6 +2075,7 @@ class BrowserPageState extends State<BrowserPage> {
         _showingAddressEditor = false;
       });
       _notifyTabCount();
+      _scheduleSessionSave();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('已用阅读模式打开保存的文章')),
       );
@@ -2033,6 +2099,7 @@ class BrowserPageState extends State<BrowserPage> {
       _showingAddressEditor = false;
     });
     _notifyTabCount();
+    _scheduleSessionSave();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('正在离线阅读已保存的副本')),
     );
@@ -2183,7 +2250,9 @@ class BrowserPageState extends State<BrowserPage> {
           menuTile(context, icon: Icons.visibility_off_outlined, title: '新建无痕标签页',
               onTap: () {
             Navigator.pop(context);
-            _addTab('', private: true);
+            // 复用已有的无痕占位标签：每次都追加会让空白占位越积越多，
+            // 主页标签条的可见下标随之整体错位。
+            openNewTab(private: true);
           }),
           menuTile(context, icon: Icons.delete_sweep_outlined, title: '关闭其他标签页',
               onTap: () {
@@ -2630,6 +2699,7 @@ class BrowserPageState extends State<BrowserPage> {
   @override
   void dispose() {
     widget.model.removeListener(_onSettingsChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _sessionSaveTimer?.cancel();
     _suggestDebounce?.cancel();
     _adLog.dispose();
