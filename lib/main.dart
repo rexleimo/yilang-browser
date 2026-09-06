@@ -233,6 +233,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           SettingsPage(
             model: widget.model,
+            downloads: widget.downloads,
             onBack: _handleSystemBack,
             onClearBrowsingData: (scopes) async {
               // IndexedStack 里 BrowserPage 随首帧构建，state 一般已就绪。

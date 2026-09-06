@@ -2,10 +2,14 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/logic/app_update.dart';
 import '../../core/logic/board_model.dart';
 import '../../core/logic/search_engines.dart';
 import '../../core/storage/bookmark_codec.dart';
@@ -15,6 +19,7 @@ import '../../core/widgets/ui_kit.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/home_backgrounds.dart';
 import '../browser/services/browser_data_store.dart';
+import '../downloads/download_controller.dart';
 
 /// Application settings — 系统式分层设置：分组卡片 + 子页推进（← 返回 / X 关闭），
 /// 顶部支持搜索过滤。行为对齐 Brave 设置页的操作习惯。
@@ -22,11 +27,15 @@ class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.model,
+    this.downloads,
     this.onBack,
     this.onClearBrowsingData,
   });
 
   final BoardModel model;
+
+  /// 下载中心控制器：应用内更新在 Android 上经系统下载管理器拉取新安装包。
+  final DownloadController? downloads;
   final VoidCallback? onBack;
 
   /// 按范围清除浏览数据（浏览器页执行），返回各范围清理条数。
@@ -177,7 +186,7 @@ class _SettingsPageState extends State<SettingsPage> {
               icon: Icons.info_outline,
               title: '关于一览 Yilan',
               value: 'v0.1.0',
-              onTap: () => _push(context, const _AboutSubPage()),
+              onTap: () => _push(context, _AboutSubPage(downloads: widget.downloads)),
             ),
         ];
 
@@ -785,20 +794,152 @@ class _PrivacySubPage extends StatelessWidget {
   }
 }
 
-class _AboutSubPage extends StatelessWidget {
-  const _AboutSubPage();
+class _AboutSubPage extends StatefulWidget {
+  const _AboutSubPage({this.downloads});
+
+  final DownloadController? downloads;
+
+  @override
+  State<_AboutSubPage> createState() => _AboutSubPageState();
+}
+
+class _AboutSubPageState extends State<_AboutSubPage> {
+  final AppUpdateService _updateService = AppUpdateService();
+  bool _checking = false;
+  String _version = kAppVersionFallback;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  /// 运行时读取真实版本（pubspec version）；插件不可用时退到兜底常量。
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _version = info.version);
+    } catch (_) {}
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    final update = await _updateService.fetchLatest();
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (update == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('检查失败，请确认网络后重试')),
+      );
+      return;
+    }
+    // 解析不了对方版本号时 compare 返回 0 → 不打扰。
+    if (AppUpdateService.compareVersions(update.version, _version) <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已是最新版本（v$_version）')),
+      );
+      return;
+    }
+    _showUpdateDialog(update);
+  }
+
+  void _showUpdateDialog(AppUpdateInfo update) {
+    final inAppDownload = defaultTargetPlatform == TargetPlatform.android &&
+        widget.downloads != null;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('发现新版本 ${update.tagName}'),
+        content: Text(
+          _updateSummary(update),
+          style: const TextStyle(fontSize: 13.5, height: 1.55),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('以后再说'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _openExternal(
+                  update.releasePageUrl ?? AppUpdateService.websiteUrl);
+            },
+            child: const Text('查看发布页'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (inAppDownload) {
+                _downloadUpdate(update.apkUrl ?? AppUpdateService.latestApkUrl);
+              } else {
+                _openExternal(AppUpdateService.websiteUrl);
+              }
+            },
+            child: Text(inAppDownload ? '下载安装包' : '前往官网'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 发布说明是 Markdown：截掉图片/链接语法噪音，取前几行做对话框摘要。
+  static String _updateSummary(AppUpdateInfo update) {
+    final lines = update.notes
+        .split('\n')
+        .map((line) => line
+            .replaceFirst(RegExp(r'^\s*[-*#>\s]+'), '')
+            .replaceAll(RegExp(r'!\[[^\]]*\]\([^)]*\)'), '')
+            .replaceAllMapped(
+                RegExp(r'\[([^\]]+)\]\([^)]*\)'), (m) => m.group(1) ?? ''))
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return '新版本已发布，前往发布页查看完整更新内容。';
+    var summary = lines.take(6).join('\n');
+    if (summary.length > 240) summary = '${summary.substring(0, 240)}…';
+    if (lines.length > 6) summary = '$summary\n…';
+    return summary;
+  }
+
+  Future<void> _downloadUpdate(String apkUrl) async {
+    final downloads = widget.downloads;
+    if (downloads == null) return;
+    await downloads.enqueue(apkUrl);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已开始下载新版本，完成后在下载中心打开安装')),
+    );
+  }
+
+  Future<void> _openExternal(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
     return _SubPageScaffold(title: '关于一览 Yilan', children: [
-      const UiAboutCard(
+      UiAboutCard(
         icon: Icons.dashboard_outlined,
         name: '一览 Yilan',
-        version: 'v0.1.0',
+        version: 'v$_version',
         description: '书签与浏览器工作台',
       ),
       const SizedBox(height: 16),
       UiCard(children: [
+        UiTile(
+          icon: Icons.system_update_outlined,
+          title: '检查更新',
+          subtitle: _checking
+              ? '正在检查…'
+              : '当前 v$_version · 有新版本时可在此获取',
+          onTap: _checking ? null : _checkForUpdate,
+        ),
         UiTile(
           icon: Icons.privacy_tip_outlined,
           title: '隐私说明',

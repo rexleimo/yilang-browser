@@ -1,6 +1,7 @@
 /// Core layer public API（logic / models / storage / widgets / metrics）。
 library;
 export 'metrics.dart';
+export 'logic/app_update.dart';
 export 'logic/board_model.dart';
 export 'logic/search_engines.dart';
 export 'logic/search_suggest.dart';
