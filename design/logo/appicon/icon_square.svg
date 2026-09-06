@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4353C4"/>
+      <stop offset="1" stop-color="#6a4cf5"/>
+    </linearGradient>
+    <radialGradient id="hl" cx="0.3" cy="0.2" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- 全幅方形（无圆角）：iOS 自带圆角蒙版，Android 传统图标由启动器裁切 -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#hl)"/>
+  <circle cx="500" cy="556" r="238" fill="none" stroke="#ffffff" stroke-width="86"/>
+  <circle cx="756" cy="312" r="76" fill="#B9BEFF"/>
+</svg>

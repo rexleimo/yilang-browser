@@ -29,12 +29,14 @@ dependencies:
   package_info_plus: ^8.0.0
   firebase_core: ^4.14.0
   firebase_analytics: ^12.5.0
+  # 隐私空间：密码加盐哈希 + 记录加密流
   crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.4
 
 dependency_overrides:
   # file_picker 拉入的 2.0.35 用了 Gradle 9 已移除的 buildscript classpath 写法，
@@ -43,3 +45,18 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+
+# 应用启动图标：源图为 C1「环视之眼」（design/logo/appicon/，矢量源文件同目录）
+# 换 logo 时改 image_path 后重跑：dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "design/logo/appicon/icon_square.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "design/logo/appicon/adaptive_bg.png"
+  adaptive_icon_foreground: "design/logo/appicon/adaptive_fg.png"
+  web:
+    generate: true
+    image_path: "design/logo/appicon/icon_square.png"
+    background_color: "#4353C4"
+    theme_color: "#4353C4"

@@ -1,5 +1,10 @@
 # 一览 Yilan · Logo 方案
 
+> ✅ **已选定 C1「环视之眼」并实装为全平台启动图标**（2026-09-07）。
+> 实装源图在 `appicon/`（全幅方形 + 自适应前景/背景分层），配置在 `pubspec.yaml`
+> 的 `flutter_launcher_icons` 段；换方案时改 `image_path` 重跑
+> `dart run flutter_launcher_icons` 即可。
+
 四个矢量方案（SVG 源文件 + 1024px PNG 渲染稿 + 对比总览图）：
 
 | 方案 | 文件 | 一句话 |

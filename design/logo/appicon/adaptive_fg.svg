@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Android 自适应图标 · 前景层：透明底，图形收在中心 66% 安全圆内
+       （圆环 + 点整体外缘半径 ≈ 330px < 338px 安全线） -->
+  <circle cx="495" cy="540" r="185" fill="none" stroke="#ffffff" stroke-width="70"/>
+  <circle cx="718" cy="332" r="58" fill="#B9BEFF"/>
+</svg>

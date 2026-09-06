@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>C1 环视之眼 · 图标效果</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#090909;color:#fff;font-family:'Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;padding:52px 60px;width:1500px}
+  .kicker{font-size:13px;font-weight:700;letter-spacing:.4em;color:#7B87FF}
+  h1{font-size:34px;font-weight:900;margin:10px 0 4px}
+  .sub{color:#9a9a9a;font-size:15px;margin-bottom:34px}
+  h2{font-size:19px;font-weight:800;color:#d8d8e6;margin:30px 0 16px}
+  .row{display:flex;gap:34px;align-items:flex-end}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:12px}
+  .label{font-size:13px;color:#8a8a94}
+  .adaptive{position:relative;background:url('appicon/adaptive_bg.png') center/cover;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .adaptive img{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .legacy img,.ios img{display:block;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .circle{border-radius:50%}
+  .squircle{border-radius:38%}
+  .rounded{border-radius:24%}
+  .teardrop{border-radius:50% 50% 50% 6px}
+  .ios{border-radius:23.5%;overflow:hidden}
+  .small{display:flex;gap:28px;align-items:center;background:#101010;border:1px solid #262626;border-radius:16px;padding:20px 30px}
+  .small .cell{gap:8px}
+</style>
+</head>
+<body>
+  <div class="kicker">YILAN · ICON PREVIEW</div>
+  <h1>「环视之眼」各场景实装效果</h1>
+  <div class="sub">当前已应用为 App 启动图标 · 以下全部由实装源图（adaptive_bg + adaptive_fg / icon_square）实时合成</div>
+
+  <h2>Android 自适应图标 · 常见启动器蒙版（背景层 + 前景层合成）</h2>
+  <div class="row">
+    <div class="cell"><div class="adaptive circle" style="width:180px;height:180px"><img src="appicon/adaptive_fg.png"></div><span class="label">圆形（Pixel 类原生）</span></div>
+    <div class="cell"><div class="adaptive squircle" style="width:180px;height:180px"><img src="appicon/adaptive_fg.png"></div><span class="label">方圆（三星 One UI）</span></div>
+    <div class="cell"><div class="adaptive rounded" style="width:180px;height:180px"><img src="appicon/adaptive_fg.png"></div><span class="label">圆角方（MIUI / ColorOS）</span></div>
+    <div class="cell"><div class="adaptive teardrop" style="width:180px;height:180px"><img src="appicon/adaptive_fg.png"></div><span class="label">泪滴</span></div>
+    <div class="cell"><div class="legacy rounded" style="width:180px;height:180px"><img src="appicon/icon_square.png" style="width:180px;height:180px;border-radius:18%"></div><span class="label">传统图标（旧设备）</span></div>
+  </div>
+
+  <h2>iOS · 超椭圆圆角（不同尺寸下的辨识度）</h2>
+  <div class="row">
+    <div class="cell"><div class="ios" style="width:180px;height:180px"><img src="appicon/icon_square.png" style="width:180px;height:180px"></div><span class="label">180px（主屏 @3x）</span></div>
+    <div class="cell"><div class="ios" style="width:120px;height:120px"><img src="appicon/icon_square.png" style="width:120px;height:120px"></div><span class="label">120px（主屏 @2x）</span></div>
+    <div class="cell"><div class="ios" style="width:80px;height:80px"><img src="appicon/icon_square.png" style="width:80px;height:80px"></div><span class="label">80px</span></div>
+    <div class="cell"><div class="ios" style="width:60px;height:60px"><img src="appicon/icon_square.png" style="width:60px;height:60px"></div><span class="label">60px（设置/通知）</span></div>
+  </div>
+
+  <h2>小尺寸极限测试（列表 / 通知栏 / 浏览器标签页）</h2>
+  <div class="small">
+    <div class="cell"><div class="adaptive circle" style="width:24px;height:24px"><img src="appicon/adaptive_fg.png"></div><span class="label">24px</span></div>
+    <div class="cell"><div class="adaptive circle" style="width:32px;height:32px"><img src="appicon/adaptive_fg.png"></div><span class="label">32px</span></div>
+    <div class="cell"><div class="adaptive circle" style="width:48px;height:48px"><img src="appicon/adaptive_fg.png"></div><span class="label">48px</span></div>
+    <div class="cell"><div class="adaptive circle" style="width:72px;height:72px"><img src="appicon/adaptive_fg.png"></div><span class="label">72px</span></div>
+    <div style="margin-left:26px;color:#8a8a94;font-size:13.5px;line-height:1.8">判定标准：24px 时「白圈 + 亮点」仍应一眼可辨 ——<br>无细线、无渐变色块依赖、无文字，通过。</div>
+  </div>
+</body>
+</html>
