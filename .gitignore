@@ -52,3 +52,13 @@ android/build/
 # AIOS/ContextDB runtime artifacts
 .aios/
 .contextdb-enable
+
+# Deps / caches — never commit
+**/node_modules/
+**/.npmcache/
+**/.update-notifier*
+
+# Local promo / design outputs — not app code
+/video/
+design/logo/*.png
+design/logo/preview.*

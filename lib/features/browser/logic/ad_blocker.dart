@@ -12,7 +12,8 @@
 /// 2. JS 引擎补丁：purge 已注入的广告元素（iframe/img/script/video…）、
 ///    cosmetic 隐藏常见广告容器、MutationObserver 兜懒加载、
 ///    patch fetch/XHR/sendBeacon/window.open/setAttribute 拦动态请求。
-/// 3. 计数反馈：通过 JavaScriptChannel 上报拦截数（Brave Shields 式反馈）。
+/// 3. 明细上报：通过 JavaScriptChannel 上报拦截计数 + 分类型/域名聚合明细
+///    （Brave Shields 式反馈，供「拦截防护」详情页展示）。
 ///
 /// 「反追踪」和「拦广告」分开建表（Firefox ETP / 广告拦截的拆分），
 /// 命中任一都算 bad，但保留分类能力（以后可分开关）。
@@ -214,7 +215,7 @@ String adBlockerScript() {
   var TRACKERS = [$trackers];
   var PATTERNS = [$patterns];
   var SELECTORS = [$selectors];
-  var blocked = 0;
+  var blocked = 0, pending = {}, flushTimer = null;
   function hostOf(u){
     try { return new URL(u, location.href).hostname.toLowerCase(); } catch(e){ return ''; }
   }
@@ -238,11 +239,23 @@ String adBlockerScript() {
   }
   function isTracker(u){ return inList(TRACKERS, hostOf(String(u||''))); }
   function isBad(u){ return isAd(u) || isTracker(u); }
-  function hit(){
+  // 命中：计数 +1，并按「类型|域名」聚进待上报批次（350ms 合并一次，
+  // 避免 purge 循环里几十条 postMessage 把通道打爆）。
+  // host 为空 = 页面内的广告位元素（cosmetic 隐藏），Dart 侧显示为「页面广告元素」。
+  function hit(kind, u){
     blocked++;
+    var h = hostOf(String(u || ''));
+    var key = kind + '|' + (h || '');
+    pending[key] = (pending[key] || 0) + 1;
+    if (!flushTimer) flushTimer = setTimeout(flush, 350);
+  }
+  function flush(){
+    flushTimer = null;
     try {
-      window.yilanAdBlock && window.yilanAdBlock.postMessage(String(blocked));
+      window.yilanAdBlock && window.yilanAdBlock.postMessage(
+        JSON.stringify({ n: blocked, items: pending }));
     } catch(e) {}
+    pending = {};
   }
   function purge(root){
     try {
@@ -255,16 +268,16 @@ String adBlockerScript() {
         var style = (el.getAttribute && el.getAttribute('style')) || '';
         if ((u && isBad(u)) || (style && style.indexOf('url(') >= 0 && isBad(style))) {
           el.remove();
-          hit();
+          hit(isTracker(u) ? 'track' : 'ad', u || style);
         }
       }
       for (var j=0;j<SELECTORS.length;j++){
         var bad = (root || document).querySelectorAll(SELECTORS[j]);
         for (var k=0;k<bad.length;k++){
           var tag = bad[k].tagName;
-          if (tag === 'IFRAME' || tag === 'SCRIPT') { bad[k].remove(); } 
+          if (tag === 'IFRAME' || tag === 'SCRIPT') { bad[k].remove(); }
           else { bad[k].style.setProperty('display','none','important'); }
-          hit();
+          hit('ad', '');
         }
       }
     } catch(e) {}
@@ -294,7 +307,7 @@ String adBlockerScript() {
     if (rawFetch) {
       window.fetch = function(input, init){
         var u = (input && input.url) ? input.url : input;
-        if (isBad(u)) { hit(); return Promise.reject(new Error('blocked')); }
+        if (isBad(u)) { hit(isTracker(u) ? 'track' : 'ad', u); return Promise.reject(new Error('blocked')); }
         return rawFetch.apply(window, arguments);
       };
     }
@@ -302,30 +315,33 @@ String adBlockerScript() {
   try {
     var rawOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, u){
-      if (isBad(u)) { hit(); u = 'data:text/plain,blocked'; }
+      if (isBad(u)) { hit(isTracker(u) ? 'track' : 'ad', u); u = 'data:text/plain,blocked'; }
       return rawOpen.apply(this, arguments);
     };
   } catch(e) {}
   try {
     if (navigator.sendBeacon) {
       var rawBeacon = navigator.sendBeacon.bind(navigator);
-      navigator.sendBeacon = function(u, data){
-        if (isBad(u)) { hit(); return true; }
-        return rawBeacon(u, data);
-      };
+    navigator.sendBeacon = function(u, data){
+      if (isBad(u)) { hit(isTracker(u) ? 'track' : 'ad', u); return true; }
+      return rawBeacon(u, data);
+    };
     }
   } catch(e) {}
   try {
     var rawOpenWin = window.open;
     window.open = function(u){
-      if (u && isBad(String(u))) { hit(); return null; }
+      if (u && isBad(String(u))) { hit(isTracker(String(u)) ? 'track' : 'ad', String(u)); return null; }
       return rawOpenWin.apply(window, arguments);
     };
   } catch(e) {}
   try {
     var rawSetAttr = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function(name, value){
-      if ((name === 'src' || name === 'data-src') && isBad(value)) { hit(); return; }
+      if ((name === 'src' || name === 'data-src') && isBad(value)) {
+        hit(isTracker(value) ? 'track' : 'ad', value);
+        return;
+      }
       return rawSetAttr.apply(this, arguments);
     };
   } catch(e) {}

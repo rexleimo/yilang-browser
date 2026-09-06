@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:io';
 
@@ -20,8 +21,12 @@ import '../../../theme/app_theme.dart';
 import '../../downloads/download_center_page.dart';
 import '../../downloads/download_controller.dart';
 import '../services/browser_data_store.dart';
+import '../services/ad_block_log_store.dart';
+import '../services/vault_store.dart';
 import '../../../core/widgets/browser_chrome.dart';
 import 'browser_collections_page.dart';
+import 'ad_block_page.dart';
+import 'vault_page.dart';
 import '../widgets/browser_dialogs.dart';
 import 'browser_history.dart';
 import '../logic/browser_javascript.dart';
@@ -60,10 +65,16 @@ class BrowserPage extends StatefulWidget {
 }
 
 class _BrowserTab {
-  _BrowserTab({required this.url, required this.private})
-      : title = url.isEmpty ? '新标签页' : _host(url);
+  _BrowserTab({
+    required this.url,
+    required this.private,
+    this.vault = false,
+  })  : title = url.isEmpty ? '新标签页' : _host(url);
 
+  /// 无痕与隐私空间都走 private 语义（不进普通历史 / 会话 / 广告日志）；
+  /// [vault] 额外表示：访问记录要加密写进隐私空间。
   final bool private;
+  final bool vault;
   String url;
   String title;
   bool loading = false;
@@ -111,6 +122,13 @@ class BrowserPageState extends State<BrowserPage> {
   final FocusNode _addressFocus = FocusNode();
   final GlobalKey _captureKey = GlobalKey();
   final BrowserDataStore _dataStore = BrowserDataStore();
+
+  /// 拦截日志（跨标签页共享、持久化；无痕标签页不写入）。
+  final AdBlockLogStore _adLog = AdBlockLogStore();
+
+  /// 隐私空间（超级保密箱）：密码锁定的加密浏览记录区。
+  final VaultStore _vault = VaultStore();
+
   final List<BrowserRecord> _history = [];
   final List<ReadingItem> _readingList = [];
   List<String> _recentSearches = const [];
@@ -225,6 +243,18 @@ class BrowserPageState extends State<BrowserPage> {
   /// Read-only state exposed for integration checks and shell coordination.
   List<String> get tabUrls => List.unmodifiable(_tabs.map((tab) => tab.url));
 
+  /// Per-tab privacy flags (same order as [tabUrls]); lets tests verify that
+  /// private opens never land in regular placeholder tabs.
+  List<bool> get tabPrivateFlags =>
+      List.unmodifiable(_tabs.map((tab) => tab.private));
+
+  /// Per-tab vault flags (same order as [tabUrls]) for privacy-space checks.
+  List<bool> get tabVaultFlags =>
+      List.unmodifiable(_tabs.map((tab) => tab.vault));
+
+  /// Exposed for tests and shell coordination (e.g. the vault page).
+  VaultStore get vaultStore => _vault;
+
   String get activeTabUrl => _currentTab.url;
 
   /// Navigates the current tab from an external surface such as Home.
@@ -245,10 +275,23 @@ class BrowserPageState extends State<BrowserPage> {
   /// "New tab" from external surfaces: no blank page is created — the user is
   /// taken back to the 一览 home to pick a bookmark or type an address. A tab
   /// is only created once a real URL is opened.
+  ///
+  /// 无痕入口例外：直接落在浏览器内的无痕起始页（占位标签页转正后才计角标），
+  /// 否则「新建无痕标签页」会退化成回主页，无痕模式等于不存在。
   void openNewTab({bool private = false}) {
     if (!mounted) return;
     _showingTabs = false;
     _showingAddressEditor = false;
+    if (private) {
+      final blankPrivate =
+          _tabs.indexWhere((tab) => _isBlank(tab) && tab.private);
+      if (blankPrivate >= 0) {
+        if (blankPrivate != _active) setState(() => _active = blankPrivate);
+      } else {
+        _addTab('', private: true);
+      }
+      return;
+    }
     widget.onOpenBookmarks?.call();
   }
 
@@ -267,14 +310,17 @@ class BrowserPageState extends State<BrowserPage> {
     }
     _showingTabs = false;
     _showingAddressEditor = false;
-    final emptyIndex =
-        _tabs.indexWhere((tab) => tab.url.isEmpty && tab.controller == null);
+    // 空白占位与同址复用都必须认隐私标志：否则无痕打开会落进普通占位页，
+    // 随后被记入历史 —— 无痕隐私在第一跳就漏光。
+    final emptyIndex = _tabs.indexWhere((tab) =>
+        tab.url.isEmpty && tab.controller == null && tab.private == private);
     if (emptyIndex >= 0) {
       if (emptyIndex != _active) setState(() => _active = emptyIndex);
       _go(url);
       return;
     }
-    final existing = _tabs.indexWhere((tab) => tab.url == url);
+    final existing =
+        _tabs.indexWhere((tab) => tab.url == url && tab.private == private);
     if (existing >= 0) {
       if (existing != _active) setState(() => _active = existing);
       _address.text = url;
@@ -319,6 +365,8 @@ class BrowserPageState extends State<BrowserPage> {
     super.initState();
     _appliedDesktopUA = widget.model.settings.desktopUA;
     widget.model.addListener(_onSettingsChanged);
+    unawaited(_adLog.load());
+    unawaited(_vault.load());
     _addressFocus.addListener(() {
       if (_addressFocus.hasFocus && _address.text.isNotEmpty) {
         _address.selection =
@@ -429,9 +477,23 @@ class BrowserPageState extends State<BrowserPage> {
     }
   }
 
+  /// 隐私空间浏览：打开（或复用）一个隐私空间占位标签页。
+  /// 记录会加密存进 [_vault]，普通历史 / 会话 / 广告日志都不落。
+  void openVaultTab() {
+    if (!mounted) return;
+    _showingTabs = false;
+    _showingAddressEditor = false;
+    final blank = _tabs.indexWhere((tab) => _isBlank(tab) && tab.vault);
+    if (blank >= 0) {
+      if (blank != _active) setState(() => _active = blank);
+    } else {
+      _addTab('', private: true, vault: true);
+    }
+  }
+
   void _addTab(String url,
-      {required bool private, bool deferController = false}) {
-    final tab = _BrowserTab(url: url, private: private);
+      {required bool private, bool vault = false, bool deferController = false}) {
+    final tab = _BrowserTab(url: url, private: private || vault, vault: vault);
     _tabs.add(tab);
     _active = _tabs.length - 1;
     _address.text = url;
@@ -458,13 +520,45 @@ class BrowserPageState extends State<BrowserPage> {
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(context.browserTokens.webViewBackground)
-      // 广告拦截计数上报（Brave Shields 式反馈）
+      // 广告拦截上报（Brave Shields 式反馈）：计数 + 分类型/域名聚合明细。
+      // 兼容旧协议的纯数字消息。无痕标签页只更新本页计数，不写入日志。
       ..addJavaScriptChannel('yilanAdBlock', onMessageReceived: (msg) {
-        final n = int.tryParse(msg.message) ?? 0;
         if (!mounted || !_tabs.contains(tab)) return;
-        if (n > tab.blockedCount) {
-          tab.blockedCount = n;
-          if (_currentTab == tab) setState(() {});
+        var handled = false;
+        try {
+          final data = jsonDecode(msg.message);
+          if (data is Map) {
+            handled = true;
+            final n = (data['n'] as num?)?.toInt() ?? 0;
+            if (n > tab.blockedCount) {
+              tab.blockedCount = n;
+              if (_currentTab == tab) setState(() {});
+            }
+            final items = data['items'];
+            if (!tab.private && items is Map) {
+              final pageHost = Uri.tryParse(tab.url)?.host ?? '';
+              items.forEach((key, value) {
+                final sep = key.indexOf('|');
+                if (sep <= 0) return;
+                final count =
+                    value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+                if (count <= 0) return;
+                _adLog.record(
+                  pageHost: pageHost,
+                  host: key.substring(sep + 1),
+                  kind: key.substring(0, sep),
+                  count: count,
+                );
+              });
+            }
+          }
+        } catch (_) {}
+        if (!handled) {
+          final n = int.tryParse(msg.message) ?? 0;
+          if (n > tab.blockedCount) {
+            tab.blockedCount = n;
+            if (_currentTab == tab) setState(() {});
+          }
         }
       })
       ..setNavigationDelegate(NavigationDelegate(
@@ -618,7 +712,16 @@ class BrowserPageState extends State<BrowserPage> {
             tab.title = title.trim();
           }
           await _refreshNavigationState(tab);
-          if (!tab.private && !isLocalCopy) _recordHistory(tab);
+          if (tab.vault && !isLocalCopy) {
+            // 隐私空间：正常留痕，但进加密保险箱（未解锁时 addRecord 自行拒绝）。
+            _vault.addRecord(BrowserRecord(
+              title: tab.title,
+              url: tab.url,
+              visitedAt: DateTime.now(),
+            ));
+          } else if (!tab.private && !isLocalCopy) {
+            _recordHistory(tab);
+          }
           _captureTabPreview(tab);
           // 标题/转正状态可能变化 → 同步给 Home 的标签条
           _notifyTabCount();
@@ -641,6 +744,15 @@ class BrowserPageState extends State<BrowserPage> {
           }
           // 广告/跟踪域名的主框架跳转（弹窗、中转页）直接拦掉
           if (widget.model.settings.adBlock && isAdUrl(request.url)) {
+            if (!tab.private) {
+              _adLog.record(
+                pageHost: Uri.tryParse(tab.url)?.host ?? '',
+                host: Uri.tryParse(request.url)?.host ?? '',
+                kind: 'pop',
+              );
+            }
+            tab.blockedCount += 1;
+            if (_currentTab == tab) setState(() {});
             return NavigationDecision.prevent;
           }
           if (_looksLikeDownload(request.url)) {
@@ -1926,9 +2038,13 @@ class BrowserPageState extends State<BrowserPage> {
     );
   }
 
+  String get _vaultSubtitle {
+    if (!_vault.hasPassword) return '设置密码后开启';
+    return _vault.unlocked ? '已解锁 · 记录加密保存' : '已锁定';
+  }
+
   void _showBrowserMenu() {
-    final blocked = _currentTab.blockedCount;
-    showBrowserMenuSheet(context, categories: [
+    final blocked = _currentTab.blockedCount;    showBrowserMenuSheet(context, categories: [
       if (widget.model.settings.adBlock)
         BrowserMenuCategory(
           icon: Icons.shield_outlined,
@@ -1936,9 +2052,41 @@ class BrowserPageState extends State<BrowserPage> {
           subtitle: '广告与追踪拦截（本页 $blocked 项）',
           actions: [
             menuTile(context, icon: Icons.shield_moon_outlined,
-                title: '已拦截 $blocked 项', onTap: () {}),
+                title: '已拦截 $blocked 项', onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => AdBlockPage(
+                    store: _adLog,
+                    currentPageHost: Uri.tryParse(_currentTab.url)?.host ?? '',
+                    currentPageBlocked: _currentTab.blockedCount,
+                  ),
+                ),
+              );
+            }),
           ],
         ),
+      BrowserMenuCategory(
+        icon: Icons.lock_outlined,
+        title: '隐私空间',
+        subtitle: _vaultSubtitle,
+        actions: [
+          menuTile(context, icon: Icons.lock_outlined, title: '进入隐私空间',
+              onTap: () {
+            Navigator.pop(context);
+            Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => VaultPage(
+                  store: _vault,
+                  onBrowseInVault: openVaultTab,
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
       BrowserMenuCategory(
         icon: Icons.build_outlined,
         title: '页面工具',
@@ -2088,6 +2236,7 @@ class BrowserPageState extends State<BrowserPage> {
       }
       return _NewTabView(
         private: tab.private,
+        vault: tab.vault,
         onFocusAddress: _openAddressEditor,
       );
     }
@@ -2195,9 +2344,11 @@ class BrowserPageState extends State<BrowserPage> {
                         children: [
                           const SizedBox(width: 12),
                           Icon(
-                            item.private
-                                ? Icons.visibility_off_outlined
-                                : Icons.public,
+                            item.vault
+                                ? Icons.lock_outlined
+                                : item.private
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.public,
                             size: 16,
                           ),
                           const SizedBox(width: 8),
@@ -2481,6 +2632,9 @@ class BrowserPageState extends State<BrowserPage> {
     widget.model.removeListener(_onSettingsChanged);
     _sessionSaveTimer?.cancel();
     _suggestDebounce?.cancel();
+    _adLog.dispose();
+    unawaited(_vault.persist());
+    _vault.dispose();
     _address.dispose();
     _addressFocus.dispose();
     super.dispose();
@@ -2666,13 +2820,15 @@ class BrowserPageState extends State<BrowserPage> {
                                   contentPadding:
                                       const EdgeInsets.symmetric(vertical: 12),
                                   prefixIcon: Icon(
-                                      tab.private
-                                          ? Icons.visibility_off_outlined
-                                          // 明文 http 不亮锁：锁只属于 https。
-                                          : (tab.url.startsWith('https://') ||
-                                                  tab.url.isEmpty)
-                                              ? Icons.lock_outline
-                                              : Icons.language,
+                                      tab.vault
+                                          ? Icons.enhanced_encryption_outlined
+                                          : tab.private
+                                              ? Icons.visibility_off_outlined
+                                              // 明文 http 不亮锁：锁只属于 https。
+                                              : (tab.url.startsWith('https://') ||
+                                                      tab.url.isEmpty)
+                                                  ? Icons.lock_outline
+                                                  : Icons.language,
                                       size: 17),
                                   hintText: '搜索或输入网址',
                                   suffixIcon: _address.text.isEmpty
@@ -2982,7 +3138,11 @@ class _TabPreviewPlaceholder extends StatelessWidget {
             child: Row(
               children: [
                 Icon(
-                  item.private ? Icons.visibility_off_outlined : Icons.lock,
+                  item.vault
+                      ? Icons.lock_outlined
+                      : item.private
+                          ? Icons.visibility_off_outlined
+                          : Icons.lock,
                   size: 10,
                   color:
                       item.private ? privateColor : tokens.addressBarForeground,
@@ -3063,15 +3223,21 @@ class _TabPreviewPlaceholder extends StatelessWidget {
 }
 
 class _NewTabView extends StatelessWidget {
-  const _NewTabView({required this.private, required this.onFocusAddress});
+  const _NewTabView({
+    required this.private,
+    this.vault = false,
+    required this.onFocusAddress,
+  });
 
   final bool private;
+  final bool vault;
   final VoidCallback onFocusAddress;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final tokens = context.browserTokens;
+    final accent = vault ? tokens.privateAccent : scheme.primary;
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(28),
@@ -3083,7 +3249,7 @@ class _NewTabView extends StatelessWidget {
               gradient: LinearGradient(
                 colors: [
                   tokens.toolbarBackground,
-                  scheme.primary.withValues(alpha: .07)
+                  accent.withValues(alpha: .07)
                 ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -3100,17 +3266,31 @@ class _NewTabView extends StatelessWidget {
                   decoration: BoxDecoration(
                       color: scheme.primaryContainer, shape: BoxShape.circle),
                   child: Icon(
-                      private ? Icons.visibility_off_outlined : Icons.public,
+                      vault
+                          ? Icons.enhanced_encryption_outlined
+                          : private
+                              ? Icons.visibility_off_outlined
+                              : Icons.public,
                       size: 34,
                       color: scheme.onPrimaryContainer),
                 ),
                 const SizedBox(height: 20),
-                Text(private ? '无痕浏览' : '新标签页',
+                Text(
+                    vault
+                        ? '隐私空间'
+                        : private
+                            ? '无痕浏览'
+                            : '新标签页',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 10),
-                Text(private ? '关闭此标签页后，不保留本次浏览数据' : '使用上方地址栏开始浏览',
+                Text(
+                    vault
+                        ? '这里的浏览记录加密保存，输入密码才能查看'
+                        : private
+                            ? '关闭此标签页后，不保留本次浏览数据'
+                            : '使用上方地址栏开始浏览',
                     textAlign: TextAlign.center,
                     style:
                         TextStyle(color: scheme.onSurfaceVariant, height: 1.4)),

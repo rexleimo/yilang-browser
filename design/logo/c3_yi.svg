@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A357F"/>
+      <stop offset="1" stop-color="#12173A"/>
+    </linearGradient>
+    <radialGradient id="hl3" cx="0.5" cy="0.05" r="1">
+      <stop offset="0" stop-color="#7B87FF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#7B87FF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg3)"/>
+  <rect width="1024" height="1024" rx="224" fill="url(#hl3)"/>
+  <!-- 「一」字笔触 + 点：一眼看完，一览无余 -->
+  <circle cx="768" cy="360" r="56" fill="#8FA0FF"/>
+  <rect x="232" y="486" width="560" height="88" rx="44" fill="#ffffff"/>
+</svg>

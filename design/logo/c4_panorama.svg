@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4353C4"/>
+      <stop offset="1" stop-color="#131A3D"/>
+    </linearGradient>
+    <filter id="card" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="20" stdDeviation="30" flood-color="#050818" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg4)"/>
+  <!-- 展开的卡片全景：打开网页，一览无余 -->
+  <g transform="translate(206,306) rotate(-13)">
+    <rect x="-170" y="-235" width="340" height="470" rx="44" fill="#B9BEFF" opacity="0.30"/>
+  </g>
+  <g transform="translate(818,306) rotate(13)">
+    <rect x="-170" y="-235" width="340" height="470" rx="44" fill="#8FA0FF" opacity="0.45"/>
+  </g>
+  <g transform="translate(512,540)" filter="url(#card)">
+    <rect x="-170" y="-235" width="340" height="470" rx="44" fill="#ffffff" opacity="0.95"/>
+    <circle cx="0" cy="-96" r="44" fill="#4353C4" opacity="0.9"/>
+    <rect x="-104" y="-8" width="208" height="26" rx="13" fill="#4353C4" opacity="0.35"/>
+    <rect x="-104" y="52" width="150" height="26" rx="13" fill="#4353C4" opacity="0.22"/>
+  </g>
+</svg>

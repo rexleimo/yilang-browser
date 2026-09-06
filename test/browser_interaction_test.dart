@@ -173,6 +173,107 @@ void main() {
           ]));
     });
 
+    testWidgets('incognito entry lands on a private start page in-browser',
+        (tester) async {
+      await _pumpMobileBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      // 无痕入口：不再退化成回主页，而是创建（或复用）无痕占位标签页。
+      // initState 留下的普通占位页仍在：[''(普通), ''(无痕)]。
+      state.openNewTab(private: true);
+      await tester.pump();
+      expect(state.tabUrls, ['', '']);
+      expect(state.tabPrivateFlags, [false, true]);
+      // 占位页不出角标；无痕起始页文案可见。
+      expect(find.text('无痕浏览'), findsOneWidget);
+
+      // 在无痕占位页上输入地址 → 原地转正，仍是 private。
+      state.openAddress('https://secret.example');
+      await tester.pump();
+      expect(state.tabUrls, ['', 'https://secret.example']);
+      expect(state.tabPrivateFlags, [false, true]);
+
+      // 再次进入无痕入口：已有无痕页非空白，新建一个无痕占位。
+      state.openNewTab(private: true);
+      await tester.pump();
+      expect(state.tabUrls, ['', 'https://secret.example', '']);
+      expect(state.tabPrivateFlags, [false, true, true]);
+    });
+
+    testWidgets('private opens never hijack a regular blank placeholder',
+        (tester) async {
+      await _pumpBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      // initState 留下的普通空白占位标签页存在。
+      expect(state.tabPrivateFlags.first, isFalse);
+
+      // 无痕打开网址：必须新开无痕标签页，不能借用普通占位页（否则记历史）。
+      state.openInNewTab('https://private.example', private: true);
+      await tester.pump();
+      expect(state.tabUrls, ['', 'https://private.example']);
+      expect(state.tabPrivateFlags, [false, true]);
+    });
+
+    testWidgets('vault tab opens a privacy-space start page', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await _pumpBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      state.openVaultTab();
+      await tester.pump();
+      // 普通占位页 + 隐私空间占位页：vault 同时具备 private 语义。
+      expect(state.tabUrls, ['', '']);
+      expect(state.tabPrivateFlags, [false, true]);
+      expect(state.tabVaultFlags, [false, true]);
+      expect(find.text('隐私空间'), findsOneWidget);
+      expect(find.text('这里的浏览记录加密保存，输入密码才能查看'), findsOneWidget);
+    });
+
+    testWidgets('vault page: first run sets password, lock, then unlock',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await _pumpBrowser(tester, _model());
+      final state = tester.state<BrowserPageState>(find.byType(BrowserPage));
+
+      // 面板入口 → 隐私空间（设置流程）
+      await _tapMenuEntry(tester, '进入隐私空间');
+      expect(find.text('设置隐私空间密码'), findsOneWidget);
+
+      // 两次输入不一致 → 报错
+      await tester.enterText(
+          find.byType(TextField).at(0), '4321');
+      await tester.enterText(
+          find.byType(TextField).at(1), '0000');
+      await tester.tap(find.text('开启隐私空间'));
+      await tester.pump();
+      expect(find.text('两次输入不一致'), findsOneWidget);
+
+      // 正确设置 → 进入记录列表（空态）
+      await tester.enterText(
+          find.byType(TextField).at(1), '4321');
+      await tester.tap(find.text('开启隐私空间'));
+      await tester.pumpAndSettle();
+      expect(find.text('这里还没有浏览记录'), findsOneWidget);
+      expect(state.vaultStore.unlocked, isTrue);
+
+      // 锁定 → 解锁界面 → 输错密码报错 → 输对解锁
+      await tester.tap(find.byTooltip('锁定'));
+      await tester.pumpAndSettle();
+      expect(state.vaultStore.unlocked, isFalse);
+      expect(find.text('隐私空间已锁定'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).first, '0000');
+      await tester.tap(find.text('解锁'));
+      await tester.pump();
+      expect(find.text('密码不正确'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).first, '4321');
+      await tester.tap(find.text('解锁'));
+      await tester.pumpAndSettle();
+      expect(find.text('这里还没有浏览记录'), findsOneWidget);
+    });
+
     testWidgets('menu exposes browser feature entry points', (tester) async {
       await _pumpBrowser(tester, _model());
       await _openBrowserMenu(tester);
