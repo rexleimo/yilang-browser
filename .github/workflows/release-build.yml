@@ -39,6 +39,13 @@ jobs:
       - name: Build APK (release, debug-signed, split per ABI)
         run: flutter build apk --release --split-per-abi
 
+      # CI runner 内存有限，gradle.properties 里的 -Xmx8G/4G 是本地 Windows
+      # 调优值；CI 降档，防止 daemon/kotlin 进程 OOM 把构建拖挂。
+      - name: Tune Gradle memory for CI
+        run: |
+          sed -i 's/-Xmx8G/-Xmx4G/; s/MaxMetaspaceSize=4G/MaxMetaspaceSize=2G/' android/gradle.properties
+          grep jvmargs android/gradle.properties
+
       - uses: actions/upload-artifact@v4
         with:
           name: yilan-android-${{ github.ref_name }}
@@ -57,6 +64,7 @@ jobs:
 
       - name: Upload APK to Firebase App Distribution
         if: ${{ steps.firebase.outputs.ready == 'true' }}
+        continue-on-error: true
         uses: wzieba/Firebase-Distribution-Github-Action@v1
         with:
           appId: 1:180204699176:android:c3d24f005719f2b54fbf1d
@@ -180,6 +188,7 @@ jobs:
 
       - name: Upload IPA to Firebase App Distribution
         if: ${{ steps.firebase_ios.outputs.ready == 'true' }}
+        continue-on-error: true
         uses: wzieba/Firebase-Distribution-Github-Action@v1
         with:
           appId: 1:180204699176:ios:ee3fa5a69c9d7a924fbf1d
