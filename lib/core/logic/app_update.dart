@@ -10,7 +10,7 @@ import 'dart:io';
 
 /// PackageInfo 不可用时（异常环境/测试）的兜底版本号。
 /// 发版时随 pubspec.yaml 的 version 一起更新。
-const String kAppVersionFallback = '0.4.3';
+const String kAppVersionFallback = '0.4.4';
 
 class AppUpdateInfo {
   const AppUpdateInfo({

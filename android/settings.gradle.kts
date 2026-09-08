@@ -34,6 +34,10 @@ dependencyResolutionManagement {
             maven { url = uri("https://maven.aliyun.com/repository/central") }
             maven { url = uri("https://maven.aliyun.com/repository/public") }
             maven { url = uri("https://storage.flutter-io.cn/download.flutter.io") }
+        } else {
+            // Flutter 引擎工件（io.flutter:*_release）只发布在 Flutter 官方
+            // maven 仓库，google()/mavenCentral() 上没有；CI 必须显式声明。
+            maven { url = uri("https://storage.googleapis.com/download.flutter.io") }
         }
         google()
         mavenCentral()
