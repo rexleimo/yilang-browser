@@ -11,9 +11,15 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        // 国内镜像仅本地构建使用（CI=null 时生效）。GitHub Actions 上必须直连
+        // 官方仓库：阿里云镜像对部分插件工件（如 google-services 4.4.2 的 marker）
+        // 返回 502，Gradle 遇 5xx 直接中止且不降级到下一仓库——v0.2.1 起 CI
+        // 构建全挂的根因。本地有 ~/.gradle 缓存 + init.gradle，行为不变。
+        if (System.getenv("CI") == null) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -23,10 +29,12 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
-        maven { url = uri("https://storage.flutter-io.cn/download.flutter.io") }
+        if (System.getenv("CI") == null) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+            maven { url = uri("https://storage.flutter-io.cn/download.flutter.io") }
+        }
         google()
         mavenCentral()
     }
